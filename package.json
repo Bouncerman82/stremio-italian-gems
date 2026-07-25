@@ -1,0 +1,35 @@
+{
+  "name": "stremio-italian-gems",
+  "version": "1.2.1",
+  "description": "Add-on Stremio per film italiani: gemme nascoste, filtri mood e shuffle avanzato",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "start:win": "node --use-system-ca src/server.js",
+    "dev": "node --watch --use-system-ca src/server.js"
+  },
+  "keywords": [
+    "stremio",
+    "addon",
+    "tmdb",
+    "italian",
+    "movies"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@stremio-addon/node-express": "^1.0.0",
+    "@stremio-addon/sdk": "^1.0.0",
+    "dotenv": "^16.4.7",
+    "express": "^5.1.0",
+    "node-fetch": "^3.3.2",
+    "sharp": "^0.33.5"
+  },
+  "allowScripts": {
+    "sharp@0.33.5": true
+  }
+}
