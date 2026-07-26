@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.1.4 — 2026-07-26
+
+### Più veloce su Render
+- Pool mix generale: **150** (prima 500) → meno chiamate TMDB a freddo
+- Pagina catalogo: **50** titoli (prima 100)
+- Meno concorrenza su lookup IMDb
+
 ## 3.1.3 — 2026-07-26
 
 ### Tag locandine (approccio lazy)

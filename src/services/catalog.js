@@ -28,9 +28,10 @@ import {
   TMDB_DISCOVER_PAGE_SIZE,
 } from './tmdb.js';
 
-const PAGE_SIZE = 100;
+const PAGE_SIZE = Number(process.env.CATALOG_PAGE_SIZE || 50);
 const COUNT_TILE_SLOTS = 1;
-const SHUFFLE_POOL_SIZE = Number(process.env.SHUFFLE_POOL_SIZE || 500);
+/** Mix generale: 150 è abbastanza vario e molto più veloce di 500 su Render free. */
+const SHUFFLE_POOL_SIZE = Number(process.env.SHUFFLE_POOL_SIZE || 150);
 const FETCH_CONCURRENCY = config.tmdbConcurrency;
 /** Nuovo campione TMDB non più spesso di così (lo shuffle riordina prima). */
 const CONTENT_REFRESH_MIN_SEC = Number(process.env.CONTENT_REFRESH_MIN_SEC || 600);
@@ -225,8 +226,8 @@ async function loadTop100Window({
 }
 
 /**
- * Campione TMDB da 500 titoli per filtri (TTL lungo).
- * Lo shuffle cambia solo l’ORDINE (veloce), non rifà 500 fetch ogni 30s.
+ * Campione TMDB per filtri (default 150, TTL lungo).
+ * Lo shuffle cambia solo l’ORDINE (veloce), non rifà N fetch a ogni apertura.
  */
 async function getContentPool({
   baseDiscover,
@@ -238,7 +239,7 @@ async function getContentPool({
 }) {
   const refreshSec = Math.max(CONTENT_REFRESH_MIN_SEC, intervalSec * 2);
   const contentBucket = Math.floor(Date.now() / 1000 / refreshSec);
-  const poolKey = `content:v5:${dataKey}:c${contentBucket}`;
+  const poolKey = `content:v6:${dataKey}:c${contentBucket}`;
   const cached = cacheGet(poolKey);
   if (cached?.items?.length) {
     return { ...cached, poolCached: true };
@@ -257,13 +258,14 @@ async function getContentPool({
     return false;
   };
 
+  const wantPages = Math.min(
+    Math.ceil(SHUFFLE_POOL_SIZE / TMDB_DISCOVER_PAGE_SIZE),
+    Math.max(1, probe.totalPages || 1),
+    12
+  );
+
   if (year) {
     const maxPage = Math.max(1, probe.totalPages || 1);
-    const wantPages = Math.min(
-      Math.ceil(SHUFFLE_POOL_SIZE / TMDB_DISCOVER_PAGE_SIZE),
-      maxPage,
-      40
-    );
     const pageSet = new Set();
     for (let i = 0; pageSet.size < wantPages && i < wantPages * 8; i++) {
       pageSet.add(seededMapIndex(i, maxPage, `${dataKey}:pg:${contentBucket}`) + 1);
@@ -275,11 +277,11 @@ async function getContentPool({
       if (pushAll(results)) break;
     }
   } else {
+    // Campione per anno (varietà) ma poche probe: max ~wantPages anni
     const years = yearList();
-    const wantPages = Math.ceil(SHUFFLE_POOL_SIZE / TMDB_DISCOVER_PAGE_SIZE);
     const jobs = [];
     const seenJob = new Set();
-    for (let i = 0; jobs.length < wantPages + 8 && i < wantPages * 12; i++) {
+    for (let i = 0; jobs.length < wantPages && i < wantPages * 10; i++) {
       const y =
         years[seededMapIndex(i, years.length, `${dataKey}:y:${contentBucket}`)] ||
         years[0];
@@ -325,14 +327,17 @@ async function getContentPool({
 
   if (collected.length < SHUFFLE_POOL_SIZE) {
     const maxPage = Math.max(1, probe.totalPages || 1);
-    const pagesNeeded = Math.ceil(
-      (SHUFFLE_POOL_SIZE - collected.length) / TMDB_DISCOVER_PAGE_SIZE
+    const pagesNeeded = Math.min(
+      Math.ceil((SHUFFLE_POOL_SIZE - collected.length) / TMDB_DISCOVER_PAGE_SIZE) + 1,
+      8
     );
     const pageNums = [];
-    for (let i = 0; i < pagesNeeded + 2; i++) {
-      pageNums.push((i % maxPage) + 1);
+    for (let i = 0; i < pagesNeeded; i++) {
+      pageNums.push(
+        seededMapIndex(i, maxPage, `${dataKey}:fill:${contentBucket}`) + 1
+      );
     }
-    const fillPages = await mapPool(pageNums, FETCH_CONCURRENCY, (p) =>
+    const fillPages = await mapPool([...new Set(pageNums)], FETCH_CONCURRENCY, (p) =>
       discoverPage(baseDiscover, p)
     );
     for (const results of fillPages) {
@@ -461,7 +466,11 @@ export async function buildCatalog({ type, id, extra = {} }) {
   }
 
   let slice = window.items || [];
-  slice = await attachImdbIds(slice, mediaType === 'tv' ? 'tv' : 'movie');
+  slice = await attachImdbIds(
+    slice,
+    mediaType === 'tv' ? 'tv' : 'movie',
+    Math.min(6, config.tmdbConcurrency || 4)
+  );
 
   const metas = slice
     .map((item) =>

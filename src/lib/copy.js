@@ -189,7 +189,7 @@ export function buildCountMetaFallback(kind) {
         '  per 24 ore restano gli stessi e fanno solo shuffle',
         '› Popolari: sempre gli ultimi 2 mesi;',
         '  col tempo entrano titoli nuovi e escono i più vecchi',
-        '› Altri filtri: mix da un campione più ampio (fino a 500)',
+        '› Altri filtri: mix da un campione più ampio (fino a 150)',
       ],
     },
   ]);
@@ -206,7 +206,7 @@ export const ADDON_DESCRIPTION = [
   '',
   'POPOLARI (ultimi 2 mesi): finestra scorrevole. Man mano che passa il tempo entrano titoli nuovi e escono i più vecchi.',
   '',
-  'FILTRI: genere, mood, anno, paese di produzione. Mix generale fino a 500 titoli. Schede con trama, cast, regia.',
+  'FILTRI: genere, mood, anno, paese di produzione. Mix generale fino a 150 titoli. Schede con trama, cast, regia.',
   '',
   'Riproduzione: usa i tuoi addon torrent/stream già installati (ID IMDb standard). Questo addon non fornisce video.',
 ].join('\n');
