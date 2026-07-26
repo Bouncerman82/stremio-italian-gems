@@ -468,12 +468,14 @@ export async function buildCatalog({ type, id, extra = {} }) {
     posterMap = await renderPostersForMovies(slice, { concurrency: 8 });
   }
 
-  const metas = slice.map((item) =>
-    toStremioMeta(item, {
-      mediaType: stremioType,
-      customPosterUrl: posterMap.get(item.id) || null,
-    })
-  );
+  const metas = slice
+    .map((item) =>
+      toStremioMeta(item, {
+        mediaType: stremioType,
+        customPosterUrl: posterMap.get(item.id) || null,
+      })
+    )
+    .filter(Boolean);
 
   const totalItems = liveTotal ?? window.totalResults ?? 0;
   const poolSize = window.poolSize || 0;

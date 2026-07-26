@@ -1,7 +1,7 @@
 {
   "name": "stremio-italian-gems",
-  "version": "3.0.0",
-  "description": "Italian Gems — cataloghi FILM/SERIE Stremio: Top 100, Popolari 2 mesi, filtri mood/anno/paese",
+  "version": "3.1.0",
+  "description": "Italian Gems — cataloghi FILM/SERIE Stremio compatibili con addon torrent (ID IMDb)",
   "type": "module",
   "main": "src/server.js",
   "scripts": {

@@ -54,8 +54,9 @@ export function buildAddon() {
   });
 
   /**
-   * Stream “Scheda completa”: apre la pagina Cast/Regia/Trama nel browser.
-   * Funziona anche quando Cinemeta gestisce la scheda dettaglio (id tt…).
+   * Stream “Scheda completa” (extra).
+   * La riproduzione vera arriva dagli altri addon (Torrentio, ecc.)
+   * perché gli id catalogo sono IMDb tt… standard.
    */
   builder.defineStreamHandler(async ({ type, id }) => {
     console.log(`[stream] type=${type} id=${id}`);
@@ -63,6 +64,7 @@ export function buildAddon() {
       if (String(id).startsWith('igems:count:')) {
         return { streams: [] };
       }
+      // Per episodi (tt…:s:e) la scheda punta comunque al titolo
       const resolved = await resolveSchedaStream({ type, id });
       if (!resolved?.schedaUrl) return { streams: [] };
 

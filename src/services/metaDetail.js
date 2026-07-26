@@ -44,19 +44,22 @@ function tramaPageUrl(mediaType, tmdbId) {
 }
 
 /**
- * Supporta: igems:tt… | igems:tmdb:123 | tt… | tmdb:123
+ * Supporta: tt… | tt…:season:ep | igems:tt… | igems:tmdb:123 | tmdb:123
  */
 async function resolveTmdbFromStremioId(type, id) {
   let raw = String(id || '');
   if (raw.startsWith('igems:')) raw = raw.slice('igems:'.length);
+
+  // Episodio serie Stremio: tt1234567:1:5 → usa solo IMDb
+  if (raw.startsWith('tt') && raw.includes(':')) {
+    raw = raw.split(':')[0];
+  }
 
   if (raw.startsWith('tmdb:')) {
     return { tmdbId: Number(raw.replace('tmdb:', '')), imdbId: null };
   }
   if (raw.startsWith('tt')) {
     const found = await findByImdb(raw);
-    const tvCount = found.tv_results?.length || 0;
-    const movieCount = found.movie_results?.length || 0;
     if (type === 'series') {
       const tv = found.tv_results?.[0];
       if (tv) return { tmdbId: tv.id, imdbId: raw };
@@ -116,8 +119,9 @@ export async function buildDetailedMeta({ type, id }) {
 
   const imdbId =
     detail.external_ids?.imdb_id || resolved.imdbId || null;
-  const addonId = imdbId ? `igems:${imdbId}` : `igems:tmdb:${detail.id}`;
-  const videoIdBase = addonId;
+  // ID nudo IMDb → Torrentio e altri addon di riproduzione funzionano
+  const addonId = imdbId || `tmdb:${detail.id}`;
+  const videoIdBase = imdbId || addonId;
   const title = detail.title || detail.name || 'Senza titolo';
   const year = (detail.release_date || detail.first_air_date || '').slice(0, 4);
   const rating = Number(detail.vote_average || 0).toFixed(1);

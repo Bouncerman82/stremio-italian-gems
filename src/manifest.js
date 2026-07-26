@@ -3,12 +3,13 @@ import { commonExtras } from './lib/filters.js';
 import { ADDON_DESCRIPTION } from './lib/copy.js';
 
 /**
- * idPrefixes SOLO igems: così la scheda dettaglio è la nostra
- * (non Cinemeta) e i tag Genere non aprono Discover rotto.
+ * idPrefixes:
+ * - tt → titoli IMDb: gli addon torrent/stream li riconoscono
+ * - igems → solo tile info catalogo (non riproducibile)
  */
 export const manifest = {
   id: 'com.italian.gems.shuffle',
-  version: '3.0.0',
+  version: '3.1.0',
   name: 'Italian Gems',
   description: ADDON_DESCRIPTION,
   logo: `${config.publicBaseUrl}/logo-v30.png`,
@@ -16,7 +17,7 @@ export const manifest = {
     'https://image.tmdb.org/t/p/original/8Gxv8gSFCU0XGDykEGv7zR1n2ua.jpg',
   resources: ['catalog', 'meta', 'stream'],
   types: ['movie', 'series'],
-  idPrefixes: ['igems'],
+  idPrefixes: ['tt', 'igems'],
   catalogs: [
     {
       id: 'gemme_film',

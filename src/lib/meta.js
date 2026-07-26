@@ -1,24 +1,30 @@
 import { posterUrl } from '../services/tmdb.js';
-import { countryBadge } from '../lib/filters.js';
 
-/** Prefisso unico: evita che Cinemeta “rubi” la scheda e rompa i tag Genere. */
+/**
+ * ID Stremio standard = IMDb (tt…).
+ * Così Torrentio e gli altri addon di stream riconoscono il titolo.
+ * Senza imdb_id → null (il catalogo lo salta).
+ */
 export function toAddonId(item) {
-  if (item.imdb_id) return `igems:${item.imdb_id}`;
-  return `igems:tmdb:${item.id}`;
+  const imdb = item.imdb_id || item.imdbId || null;
+  if (imdb && String(imdb).startsWith('tt')) return String(imdb);
+  return null;
 }
 
 /**
  * Meta preview per catalogo Stremio.
+ * @returns {object|null}
  */
 export function toStremioMeta(item, options = {}) {
   const { customPosterUrl, mediaType = 'movie' } = options;
   const type = mediaType === 'tv' || mediaType === 'series' ? 'series' : 'movie';
   const id = toAddonId(item);
+  if (!id) return null;
+
   const rating = Number(item.vote_average || 0).toFixed(1);
   const title =
     item.title || item.name || item.original_title || item.original_name || 'Senza titolo';
   const date = item.release_date || item.first_air_date || '';
-  const country = countryBadge(item);
 
   return {
     id,

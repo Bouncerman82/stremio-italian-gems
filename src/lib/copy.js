@@ -206,5 +206,7 @@ export const ADDON_DESCRIPTION = [
   '',
   'POPOLARI (ultimi 2 mesi): finestra scorrevole. Man mano che passa il tempo entrano titoli nuovi e escono i più vecchi.',
   '',
-  'FILTRI: genere, mood, anno, paese di produzione. Mix generale fino a 500 titoli. Schede con trama, cast, regia e pagine dettagliate.',
+  'FILTRI: genere, mood, anno, paese di produzione. Mix generale fino a 500 titoli. Schede con trama, cast, regia.',
+  '',
+  'Riproduzione: usa i tuoi addon torrent/stream già installati (ID IMDb standard). Questo addon non fornisce video.',
 ].join('\n');

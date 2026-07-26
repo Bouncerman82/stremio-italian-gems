@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.1.0 — 2026-07-26
+
+### Fix riproduzione
+- Gli ID catalogo sono di nuovo **IMDb `tt…`** (non più `igems:tt…`)
+- Così Torrentio e gli altri addon di stream funzionano su Gemme FILM/SERIE
+- Prefissi: `tt` (titoli) + `igems` (solo tile info)
+- Episodi serie: `tt…:stagione:episodio` compatibile con gli addon torrent
+
 ## 3.0.0 — 2026-07-26
 
 ### Pronto per produzione
