@@ -1,0 +1,40 @@
+{
+  "name": "stremio-italian-gems",
+  "description": "Italian Gems Stremio addon",
+  "repository": "https://github.com/Bouncerman82/stremio-italian-gems",
+  "keywords": ["stremio", "addon", "tmdb"],
+  "env": {
+    "TMDB_API_KEY": {
+      "description": "API key from themoviedb.org",
+      "required": true
+    },
+    "PUBLIC_BASE_URL": {
+      "description": "Public HTTPS URL of this addon (no trailing slash)",
+      "required": true
+    },
+    "CUSTOM_POSTERS": {
+      "description": "1=on, 0=off (use 0 on free plans)",
+      "value": "0",
+      "required": false
+    }
+  },
+  "formation": {
+    "web": {
+      "quantity": 1
+    }
+  },
+  "healthchecks": {
+    "web": [
+      {
+        "type": "startup",
+        "name": "web check",
+        "description": "Checking if web process responds",
+        "path": "/health",
+        "attempts": 5,
+        "timeout": 10,
+        "wait": 5,
+        "initialDelay": 5
+      }
+    ]
+  }
+}
