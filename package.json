@@ -1,7 +1,7 @@
 {
   "name": "stremio-italian-gems",
-  "version": "1.2.1",
-  "description": "Add-on Stremio per film italiani: gemme nascoste, filtri mood e shuffle avanzato",
+  "version": "3.0.0",
+  "description": "Italian Gems — cataloghi FILM/SERIE Stremio: Top 100, Popolari 2 mesi, filtri mood/anno/paese",
   "type": "module",
   "main": "src/server.js",
   "scripts": {

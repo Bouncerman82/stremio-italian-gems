@@ -2,21 +2,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
-import { moodBadgeLabel } from '../lib/moods.js';
+import { countryBadge } from '../lib/filters.js';
 import { config } from '../config.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const postersDir = path.join(__dirname, '..', '..', 'public', 'posters');
 
 fs.mkdirSync(postersDir, { recursive: true });
-
-const MOOD_COLORS = {
-  Avventuroso: '#e67e22',
-  'Nostalgico/Toccante': '#5dade2',
-  'Tensione/Giallo': '#c0392b',
-  'Risate e Leggerezza': '#27ae60',
-  'Mistero/Cospirazione': '#8e44ad',
-};
 
 function safeKey(value) {
   return String(value || 'x')
@@ -32,23 +24,26 @@ function escapeXml(text) {
     .replace(/"/g, '&quot;');
 }
 
-function buildOverlaySvg({ width, height, rating, moodName, isItalian }) {
+function buildOverlaySvg({ width, height, rating, country }) {
   const ratingText = Number(rating || 0).toFixed(1);
-  const moodShort = moodName ? moodBadgeLabel(moodName) : isItalian ? 'ITA' : 'GEM';
-  const moodColor = MOOD_COLORS[moodName] || (isItalian ? '#1abc9c' : '#f39c12');
+  const countryText = country || 'INT';
 
-  // Dimensioni relative alla locandina
   const pad = Math.round(width * 0.04);
   const badgeH = Math.round(height * 0.07);
   const ratingW = Math.round(width * 0.22);
-  const moodW = Math.round(width * 0.2);
+  const countryW = Math.max(
+    Math.round(width * 0.16),
+    countryText.length * Math.round(badgeH * 0.42)
+  );
   const fontSize = Math.round(badgeH * 0.55);
   const radius = Math.round(badgeH * 0.22);
+  const gap = Math.round(width * 0.018);
 
+  // Entrambi a destra: [PAESE]  gap  [★ voto]
   const ratingX = width - pad - ratingW;
   const ratingY = pad;
-  const moodX = pad;
-  const moodY = pad;
+  const countryX = ratingX - gap - countryW;
+  const countryY = pad;
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
@@ -58,16 +53,16 @@ function buildOverlaySvg({ width, height, rating, moodName, isItalian }) {
     </filter>
   </defs>
 
-  <!-- Badge mood / ITA (alto sinistra) -->
+  <!-- Badge paese (a destra, a sinistra del voto) -->
   <g filter="url(#shadow)">
-    <rect x="${moodX}" y="${moodY}" rx="${radius}" ry="${radius}"
-          width="${moodW}" height="${badgeH}" fill="${moodColor}"/>
-    <text x="${moodX + moodW / 2}" y="${moodY + badgeH / 2 + fontSize * 0.35}"
+    <rect x="${countryX}" y="${countryY}" rx="${radius}" ry="${radius}"
+          width="${countryW}" height="${badgeH}" fill="#0f766e"/>
+    <text x="${countryX + countryW / 2}" y="${countryY + badgeH / 2 + fontSize * 0.35}"
           text-anchor="middle" font-family="Arial, Helvetica, sans-serif"
-          font-size="${fontSize}" font-weight="700" fill="#ffffff">${escapeXml(moodShort)}</text>
+          font-size="${fontSize}" font-weight="700" fill="#ffffff">${escapeXml(countryText)}</text>
   </g>
 
-  <!-- Badge voto (alto destra) stile IMDb -->
+  <!-- Badge voto (alto destra) -->
   <g filter="url(#shadow)">
     <rect x="${ratingX}" y="${ratingY}" rx="${radius}" ry="${radius}"
           width="${ratingW}" height="${badgeH}" fill="#121212"/>
@@ -83,29 +78,20 @@ function buildOverlaySvg({ width, height, rating, moodName, isItalian }) {
 </svg>`;
 }
 
-/**
- * Scarica la locandina TMDB, sovrappone badge voto + mood, salva su disco.
- * @returns {Promise<string|null>} URL pubblico del poster custom, o null se fallisce
- */
 export async function renderCustomPoster({
   tmdbId,
   posterPath,
   rating,
-  moodName = null,
-  isItalian = false,
+  country = 'INT',
 }) {
   if (!posterPath || !tmdbId) return null;
 
   const ratingKey = Number(rating || 0).toFixed(1);
-  const moodKey = safeKey(moodName || (isItalian ? 'ita' : 'gem'));
-  const filename = `${tmdbId}_${ratingKey}_${moodKey}.jpg`;
+  const filename = `${tmdbId}_${ratingKey}_${safeKey(country)}_r.jpg`;
   const outPath = path.join(postersDir, filename);
   const publicUrl = `${config.publicBaseUrl}/posters/${filename}`;
 
-  // Cache su disco: se esiste già, riusa
-  if (fs.existsSync(outPath)) {
-    return publicUrl;
-  }
+  if (fs.existsSync(outPath)) return publicUrl;
 
   const sourceUrl = `${config.tmdbImageBase}${posterPath}`;
 
@@ -120,13 +106,7 @@ export async function renderCustomPoster({
     const height = meta.height || 750;
 
     const overlay = Buffer.from(
-      buildOverlaySvg({
-        width,
-        height,
-        rating,
-        moodName,
-        isItalian,
-      })
+      buildOverlaySvg({ width, height, rating, country })
     );
 
     await image
@@ -141,24 +121,21 @@ export async function renderCustomPoster({
   }
 }
 
-/**
- * Genera poster in parallelo con concorrenza limitata.
- */
-export async function renderPostersForMovies(movies, { moodLabel = null, concurrency = 6 } = {}) {
+export async function renderPostersForMovies(items, { concurrency = 6 } = {}) {
   const results = new Map();
 
-  for (let i = 0; i < movies.length; i += concurrency) {
-    const chunk = movies.slice(i, i + concurrency);
+  for (let i = 0; i < items.length; i += concurrency) {
+    const chunk = items.slice(i, i + concurrency);
     await Promise.all(
-      chunk.map(async (movie) => {
+      chunk.map(async (item) => {
+        const country = countryBadge(item);
         const url = await renderCustomPoster({
-          tmdbId: movie.id,
-          posterPath: movie.poster_path,
-          rating: movie.vote_average,
-          moodName: moodLabel,
-          isItalian: movie.original_language === 'it',
+          tmdbId: item.id,
+          posterPath: item.poster_path,
+          rating: item.vote_average,
+          country,
         });
-        if (url) results.set(movie.id, url);
+        if (url) results.set(item.id, url);
       })
     );
   }

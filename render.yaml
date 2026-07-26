@@ -5,14 +5,17 @@ services:
     plan: free
     buildCommand: npm install
     startCommand: npm start
+    healthCheckPath: /health
     envVars:
       - key: TMDB_API_KEY
         sync: false
       - key: PUBLIC_BASE_URL
         sync: false
-      - key: SHUFFLE_CACHE_HOURS
-        value: "6"
       - key: CUSTOM_POSTERS
-        value: "1"
+        value: "0"
+      - key: TMDB_CONCURRENCY
+        value: "4"
+      - key: DATA_CACHE_SECONDS
+        value: "21600"
       - key: NODE_VERSION
         value: "20"
