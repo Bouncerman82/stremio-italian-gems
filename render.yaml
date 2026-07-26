@@ -12,7 +12,7 @@ services:
       - key: PUBLIC_BASE_URL
         sync: false
       - key: CUSTOM_POSTERS
-        value: "0"
+        value: "1"
       - key: TMDB_CONCURRENCY
         value: "4"
       - key: DATA_CACHE_SECONDS
