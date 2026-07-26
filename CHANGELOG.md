@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.1.2 — 2026-07-26
+
+### Fix tag locandine (Render)
+- Preferenza DNS IPv4 per image.tmdb.org
+- Download poster w342 (più leggero) in produzione
+
 ## 3.1.1 — 2026-07-26
 
 ### Fix tag sulle locandine (Render)

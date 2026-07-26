@@ -1,14 +1,27 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import dns from 'node:dns';
 import sharp from 'sharp';
 import { countryBadge } from '../lib/filters.js';
 import { config } from '../config.js';
+
+// Preferisci IPv4: su alcuni host (Render) image.tmdb.org fallisce su IPv6
+try {
+  dns.setDefaultResultOrder('ipv4first');
+} catch {
+  // Node vecchio
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const postersDir = path.join(__dirname, '..', '..', 'public', 'posters');
 
 fs.mkdirSync(postersDir, { recursive: true });
+
+/** Base immagini TMDB più leggera in produzione (download più affidabile). */
+const posterImageBase = config.publicBaseUrl.startsWith('https://')
+  ? 'https://image.tmdb.org/t/p/w342'
+  : config.tmdbImageBase;
 
 function safeKey(value) {
   return String(value || 'x')
@@ -117,7 +130,7 @@ export async function renderCustomPoster({
 
   if (fs.existsSync(outPath)) return publicUrl;
 
-  const sourceUrl = `${config.tmdbImageBase}${posterPath}`;
+  const sourceUrl = `${posterImageBase}${posterPath}`;
 
   try {
     const input = await fetchPosterBuffer(sourceUrl);

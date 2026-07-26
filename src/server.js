@@ -6,6 +6,7 @@ import { manifest } from './manifest.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
+import dns from 'node:dns';
 import {
   renderPersonHtml,
   renderTramaHtml,
@@ -20,6 +21,11 @@ import {
   buildSchedaPageData,
 } from './services/metaDetail.js';
 
+try {
+  dns.setDefaultResultOrder('ipv4first');
+} catch {
+  // ignore
+}
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.join(__dirname, '..');
 const publicDir = path.join(rootDir, 'public');
