@@ -39,7 +39,6 @@ function buildOverlaySvg({ width, height, rating, country }) {
   const radius = Math.round(badgeH * 0.22);
   const gap = Math.round(width * 0.018);
 
-  // Entrambi a destra: [PAESE]  gap  [★ voto]
   const ratingX = width - pad - ratingW;
   const ratingY = pad;
   const countryX = ratingX - gap - countryW;
@@ -52,8 +51,6 @@ function buildOverlaySvg({ width, height, rating, country }) {
       <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#000" flood-opacity="0.55"/>
     </filter>
   </defs>
-
-  <!-- Badge paese (a destra, a sinistra del voto) -->
   <g filter="url(#shadow)">
     <rect x="${countryX}" y="${countryY}" rx="${radius}" ry="${radius}"
           width="${countryW}" height="${badgeH}" fill="#0f766e"/>
@@ -61,8 +58,6 @@ function buildOverlaySvg({ width, height, rating, country }) {
           text-anchor="middle" font-family="Arial, Helvetica, sans-serif"
           font-size="${fontSize}" font-weight="700" fill="#ffffff">${escapeXml(countryText)}</text>
   </g>
-
-  <!-- Badge voto (alto destra) -->
   <g filter="url(#shadow)">
     <rect x="${ratingX}" y="${ratingY}" rx="${radius}" ry="${radius}"
           width="${ratingW}" height="${badgeH}" fill="#121212"/>
@@ -76,6 +71,35 @@ function buildOverlaySvg({ width, height, rating, country }) {
           font-size="${fontSize}" font-weight="700" fill="#ffffff">${escapeXml(ratingText)}</text>
   </g>
 </svg>`;
+}
+
+async function fetchPosterBuffer(sourceUrl, attempts = 3) {
+  let lastErr;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 12_000);
+      const res = await fetch(sourceUrl, {
+        signal: ctrl.signal,
+        headers: {
+          'User-Agent': 'ItalianGems/3.1 (+https://stremio-italian-gems.onrender.com)',
+          Accept: 'image/jpeg,image/webp,image/*,*/*',
+        },
+        redirect: 'follow',
+      });
+      clearTimeout(timer);
+      if (!res.ok) {
+        lastErr = new Error(`HTTP ${res.status}`);
+        await new Promise((r) => setTimeout(r, 200 * (i + 1)));
+        continue;
+      }
+      return Buffer.from(await res.arrayBuffer());
+    } catch (err) {
+      lastErr = err;
+      await new Promise((r) => setTimeout(r, 250 * (i + 1)));
+    }
+  }
+  throw lastErr || new Error('fetch failed');
 }
 
 export async function renderCustomPoster({
@@ -96,9 +120,7 @@ export async function renderCustomPoster({
   const sourceUrl = `${config.tmdbImageBase}${posterPath}`;
 
   try {
-    const res = await fetch(sourceUrl);
-    if (!res.ok) return null;
-    const input = Buffer.from(await res.arrayBuffer());
+    const input = await fetchPosterBuffer(sourceUrl);
 
     const image = sharp(input);
     const meta = await image.metadata();
@@ -121,11 +143,20 @@ export async function renderCustomPoster({
   }
 }
 
-export async function renderPostersForMovies(items, { concurrency = 6 } = {}) {
+export async function renderPostersForMovies(items, { concurrency } = {}) {
   const results = new Map();
+  // Su hosting free meno parallelo → meno "fetch failed" / rate limit
+  const limit = Math.max(
+    1,
+    Number(
+      concurrency ??
+        process.env.POSTER_CONCURRENCY ??
+        (config.publicBaseUrl.startsWith('https://') ? 3 : 6)
+    )
+  );
 
-  for (let i = 0; i < items.length; i += concurrency) {
-    const chunk = items.slice(i, i + concurrency);
+  for (let i = 0; i < items.length; i += limit) {
+    const chunk = items.slice(i, i + limit);
     await Promise.all(
       chunk.map(async (item) => {
         const country = countryBadge(item);

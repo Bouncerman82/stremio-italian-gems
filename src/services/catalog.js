@@ -465,7 +465,7 @@ export async function buildCatalog({ type, id, extra = {} }) {
 
   let posterMap = new Map();
   if (config.customPosters) {
-    posterMap = await renderPostersForMovies(slice, { concurrency: 8 });
+    posterMap = await renderPostersForMovies(slice);
   }
 
   const metas = slice

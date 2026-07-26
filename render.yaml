@@ -13,8 +13,12 @@ services:
         sync: false
       - key: CUSTOM_POSTERS
         value: "1"
+      - key: POSTER_CONCURRENCY
+        value: "3"
       - key: TMDB_CONCURRENCY
         value: "4"
+      - key: NODE_OPTIONS
+        value: "--use-system-ca"
       - key: DATA_CACHE_SECONDS
         value: "21600"
       - key: NODE_VERSION

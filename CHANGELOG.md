@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.1.1 — 2026-07-26
+
+### Fix tag sulle locandine (Render)
+- Retry + User-Agent sul download immagini TMDB
+- Meno concorrenza poster in produzione
+- `node --use-system-ca` anche su `npm start` (SSL su Render)
+
 ## 3.1.0 — 2026-07-26
 
 ### Fix riproduzione

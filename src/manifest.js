@@ -9,7 +9,7 @@ import { ADDON_DESCRIPTION } from './lib/copy.js';
  */
 export const manifest = {
   id: 'com.italian.gems.shuffle',
-  version: '3.1.0',
+  version: '3.1.1',
   name: 'Italian Gems',
   description: ADDON_DESCRIPTION,
   logo: `${config.publicBaseUrl}/logo-v30.png`,
