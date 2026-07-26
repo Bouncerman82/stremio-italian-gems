@@ -14,7 +14,11 @@ services:
       - key: CUSTOM_POSTERS
         value: "1"
       - key: CATALOG_PAGE_SIZE
-        value: "50"
+        value: "30"
+      - key: YEARS_PER_PAGE
+        value: "3"
+      - key: PAGES_PER_YEAR
+        value: "2"
       - key: POSTER_CONCURRENCY
         value: "3"
       - key: TMDB_CONCURRENCY

@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.2.1 — 2026-07-26
+
+### Velocità catalogo (non era RAM)
+- Meno chiamate TMDB: 3 anni × 2 pagine per apertura (non 40+ fetch sparse)
+- Pagina catalogo 30 titoli
+- Cache disco ID IMDb
+- Shuffle resta su tutto il DB (anni diversi a ogni pagina/seed)
+
 ## 3.2.0 — 2026-07-26
 
 ### Shuffle sul catalogo completo

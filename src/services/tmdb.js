@@ -1,6 +1,44 @@
 import { config } from '../config.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const imdbCache = new Map();
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const imdbDiskPath = path.join(__dirname, '..', '..', 'data', 'imdb-cache.json');
+let imdbDiskDirty = false;
+let imdbDiskLoaded = false;
+
+function loadImdbDisk() {
+  if (imdbDiskLoaded) return;
+  imdbDiskLoaded = true;
+  try {
+    if (!fs.existsSync(imdbDiskPath)) return;
+    const raw = JSON.parse(fs.readFileSync(imdbDiskPath, 'utf8'));
+    if (raw && typeof raw === 'object') {
+      for (const [k, v] of Object.entries(raw)) imdbCache.set(k, v);
+    }
+  } catch {
+    // ignore
+  }
+}
+
+function scheduleImdbDiskFlush() {
+  if (!imdbDiskDirty) return;
+  imdbDiskDirty = false;
+  try {
+    fs.mkdirSync(path.dirname(imdbDiskPath), { recursive: true });
+    const obj = Object.fromEntries(imdbCache);
+    // Cap dimensione: tieni le ultime ~20k chiavi
+    const keys = Object.keys(obj);
+    if (keys.length > 20_000) {
+      for (const k of keys.slice(0, keys.length - 20_000)) delete obj[k];
+    }
+    fs.writeFileSync(imdbDiskPath, JSON.stringify(obj));
+  } catch {
+    // ignore
+  }
+}
 
 function buildUrl(pathname, params = {}) {
   const url = new URL(`${config.tmdbBaseUrl}${pathname}`);
@@ -421,19 +459,23 @@ export async function discoverTop100(mediaType, genreIds = [], originCountry = n
 }
 
 export async function getImdbId(tmdbId, mediaType = 'movie') {
+  loadImdbDisk();
   const key = `${mediaType}:${tmdbId}`;
   if (imdbCache.has(key)) return imdbCache.get(key);
-  const path =
+  const pathName =
     mediaType === 'tv'
       ? `/tv/${tmdbId}/external_ids`
       : `/movie/${tmdbId}/external_ids`;
-  const data = await tmdbFetch(path);
+  const data = await tmdbFetch(pathName);
   const imdbId = data.imdb_id || null;
   imdbCache.set(key, imdbId);
+  imdbDiskDirty = true;
+  if (imdbCache.size % 40 === 0) scheduleImdbDiskFlush();
   return imdbId;
 }
 
 export async function attachImdbIds(items, mediaType = 'movie', concurrency = 12) {
+  loadImdbDisk();
   const out = [];
   for (let i = 0; i < items.length; i += concurrency) {
     const chunk = items.slice(i, i + concurrency);
@@ -449,6 +491,7 @@ export async function attachImdbIds(items, mediaType = 'movie', concurrency = 12
     );
     out.push(...enriched);
   }
+  scheduleImdbDiskFlush();
   return out;
 }
 

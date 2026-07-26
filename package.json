@@ -1,6 +1,6 @@
 {
   "name": "stremio-italian-gems",
-  "version": "3.2.0",
+  "version": "3.2.1",
   "description": "Italian Gems — cataloghi FILM/SERIE Stremio compatibili con addon torrent (ID IMDb)",
   "type": "module",
   "main": "src/server.js",
