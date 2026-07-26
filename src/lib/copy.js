@@ -139,11 +139,13 @@ export function buildCountTileDescription({
       ].join('\n'),
     },
     {
-      title: 'MIX IN CATALOGO',
+      title: 'SHUFFLE SU TUTTO IL CATALOGO',
       body: [
-        `Qui vedi un mix di ${poolLabel} titoli`,
-        'presi da quel totale, in ordine casuale.',
-        'Scorri per vedere il resto del mix.',
+        'L’ordine è casuale su TUTTO lo spazio risultati',
+        '(non su un campione ridotto).',
+        'In elenco restano i titoli con ID IMDb,',
+        'così gli addon torrent/stream li riconoscono.',
+        'Scorri per continuare a pescare dal totale.',
       ].join('\n'),
     },
     filterLabel
@@ -153,8 +155,8 @@ export function buildCountTileDescription({
       title: 'COME FUNZIONA',
       lines: [
         ...mixOrderLines(intervalSec, bucket),
-        '› Esci e rientra (o cambia un filtro) per aggiornare il mix',
-        '› Filtri disponibili: Genere, Mood, Anno, Paese',
+        '› Esci e rientra (o cambia un filtro) per un nuovo ordine',
+        '› Filtri: Genere, Mood, Anno, Paese',
         '› Genere speciale: Popolari (2 mesi) e Top 100 (voto 6,5+)',
         `› Circa ${pageSize} titoli per pagina`,
         '› Questa tile NON è un film/serie — torna indietro e apri un titolo sotto',
@@ -189,7 +191,7 @@ export function buildCountMetaFallback(kind) {
         '  per 24 ore restano gli stessi e fanno solo shuffle',
         '› Popolari: sempre gli ultimi 2 mesi;',
         '  col tempo entrano titoli nuovi e escono i più vecchi',
-        '› Altri filtri: mix da un campione più ampio (fino a 150)',
+        '› Altri filtri: shuffle su tutto il catalogo TMDB (ID IMDb)',
       ],
     },
   ]);
@@ -206,7 +208,7 @@ export const ADDON_DESCRIPTION = [
   '',
   'POPOLARI (ultimi 2 mesi): finestra scorrevole. Man mano che passa il tempo entrano titoli nuovi e escono i più vecchi.',
   '',
-  'FILTRI: genere, mood, anno, paese di produzione. Mix generale fino a 150 titoli. Schede con trama, cast, regia.',
+  'FILTRI: genere, mood, anno, paese. Shuffle sul catalogo completo (TMDB → ID IMDb). Schede con trama, cast, regia.',
   '',
   'Riproduzione: usa i tuoi addon torrent/stream già installati (ID IMDb standard). Questo addon non fornisce video.',
 ].join('\n');

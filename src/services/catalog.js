@@ -14,7 +14,7 @@ import {
 } from '../lib/filters.js';
 import { buildCountTileDescription } from '../lib/copy.js';
 import { toStremioMeta } from '../lib/meta.js';
-import { fisherYatesShuffle, hashString, seededMapIndex } from '../lib/shuffle.js';
+import { hashString, seededMapIndex } from '../lib/shuffle.js';
 import { customPosterUrlForItem } from '../posters/renderer.js';
 import { DAY_SECONDS, cacheGet, cacheSet } from './cache.js';
 import {
@@ -25,16 +25,15 @@ import {
   discoverTop100,
   discoverProbe,
   TMDB_DISCOVER_MAX_PAGE,
+  TMDB_DISCOVER_MAX_RESULTS,
   TMDB_DISCOVER_PAGE_SIZE,
 } from './tmdb.js';
 
 const PAGE_SIZE = Number(process.env.CATALOG_PAGE_SIZE || 50);
 const COUNT_TILE_SLOTS = 1;
-/** Mix generale: 150 è abbastanza vario e molto più veloce di 500 su Render free. */
-const SHUFFLE_POOL_SIZE = Number(process.env.SHUFFLE_POOL_SIZE || 150);
 const FETCH_CONCURRENCY = config.tmdbConcurrency;
-/** Nuovo campione TMDB non più spesso di così (lo shuffle riordina prima). */
-const CONTENT_REFRESH_MIN_SEC = Number(process.env.CONTENT_REFRESH_MIN_SEC || 600);
+/** Cache probe per-anno (shuffle full-DB). */
+const YEAR_PROBE_TTL_MS = Number(process.env.YEAR_PROBE_TTL_MS || 6 * 3600 * 1000);
 
 async function mapPool(items, concurrency, fn) {
   const out = new Array(items.length);
@@ -145,7 +144,7 @@ export function makeCountMeta({
       ? `Top 100 · voto 6,5+ · validi 24h`
       : mode === 'popular-shuffle'
         ? `Ultimi 2 mesi · finestra scorrevole`
-        : `${totalLabel} trovati · mix ${poolLabel}`;
+        : `${totalLabel} trovati · shuffle su tutto il catalogo`;
 
   return {
     id,
@@ -155,7 +154,7 @@ export function makeCountMeta({
         ? `▣ Top 100 ${kind} · voto 6,5+`
         : mode === 'popular-shuffle'
           ? `▣ Popolari ${kind} · ultimi 2 mesi`
-          : `▣ ${totalLabel} ${kind} · mix ${poolLabel}`,
+          : `▣ ${totalLabel} ${kind} · shuffle totale`,
     poster: `${config.publicBaseUrl}/logo-v30.png`,
     posterShape: 'square',
     description,
@@ -225,134 +224,175 @@ async function loadTop100Window({
   };
 }
 
+/** Indici catalogo → indici pseudo-casuali unici nello spazio [0, universe). */
+function uniqueUniverseIndices(realSkip, limit, universe, seed) {
+  const n = Math.max(1, universe);
+  const out = [];
+  const used = new Set();
+  const maxAttempts = Math.max(limit * 12, 48);
+  for (let i = 0; out.length < limit && i < maxAttempts; i++) {
+    let idx = seededMapIndex(realSkip + i, n, seed);
+    let guard = 0;
+    while (used.has(idx) && guard < 64) {
+      idx = (idx + 1 + seededMapIndex(realSkip + i, n, `${seed}:g${guard}`)) % n;
+      guard++;
+    }
+    if (used.has(idx)) continue;
+    used.add(idx);
+    out.push({ idx, order: out.length });
+  }
+  return out;
+}
+
+async function itemsFromDiscoverPages(discover, picks) {
+  // picks: [{ page, offset, order }] → [{ order, item }]
+  const byPage = new Map();
+  for (const p of picks) {
+    if (!byPage.has(p.page)) byPage.set(p.page, []);
+    byPage.get(p.page).push(p);
+  }
+  const pageNums = [...byPage.keys()];
+  const pages = await mapPool(pageNums, FETCH_CONCURRENCY, (page) =>
+    discoverPage(discover, page)
+  );
+  const pageMap = new Map(pageNums.map((p, i) => [p, pages[i] || []]));
+  const out = [];
+  for (const p of picks) {
+    const row = pageMap.get(p.page)?.[p.offset];
+    if (row) out.push({ order: p.order, item: row });
+  }
+  return out;
+}
+
+async function probeYearDiscover(mediaType, genreIds, originCountry, year) {
+  const cacheKey = `yprobe:v1:${mediaType}:g${(genreIds || []).join('-') || 'any'}:c${originCountry || 'any'}:y${year}`;
+  const cached = cacheGet(cacheKey);
+  if (cached) return cached;
+  const discover = buildDiscoverParams({
+    mediaType,
+    genreIds,
+    year,
+    originCountry,
+  });
+  const probe = await discoverProbe(discover, { maxAgeMs: YEAR_PROBE_TTL_MS });
+  const packed = {
+    discover,
+    accessible: Math.max(1, probe.accessible || TMDB_DISCOVER_PAGE_SIZE),
+    totalPages: Math.max(1, probe.totalPages || 1),
+  };
+  cacheSet(cacheKey, packed, Math.floor(YEAR_PROBE_TTL_MS / 1000));
+  return packed;
+}
+
 /**
- * Campione TMDB per filtri (default 150, TTL lungo).
- * Lo shuffle cambia solo l’ORDINE (veloce), non rifà N fetch a ogni apertura.
+ * Shuffle su TUTTO lo spazio TMDB dei filtri (non un campione fisso).
+ * Carica solo le pagine necessarie per la finestra Stremio corrente.
+ * Senza anno: sharding per anno per superare il tetto TMDB da 10k.
+ * In catalogo restano solo titoli con ID IMDb (attachImdbIds + toStremioMeta).
  */
-async function getContentPool({
+async function loadFullDbShuffleWindow({
   baseDiscover,
   genreIds,
   year,
   originCountry,
-  dataKey,
-  intervalSec,
+  seed,
+  realSkip,
+  limit,
 }) {
-  const refreshSec = Math.max(CONTENT_REFRESH_MIN_SEC, intervalSec * 2);
-  const contentBucket = Math.floor(Date.now() / 1000 / refreshSec);
-  const poolKey = `content:v6:${dataKey}:c${contentBucket}`;
-  const cached = cacheGet(poolKey);
-  if (cached?.items?.length) {
-    return { ...cached, poolCached: true };
-  }
+  const mediaType = baseDiscover.mediaType === 'tv' ? 'tv' : 'movie';
+  const probe = await discoverProbe(baseDiscover, {
+    maxAgeMs: config.tmdbProbeMaxAgeMs,
+  });
+  const liveTotal = probe.totalResults || 0;
 
-  const probe = await discoverProbe(baseDiscover);
-  const collected = [];
-  const seen = new Set();
-  const pushAll = (results) => {
-    for (const item of results || []) {
-      if (!item?.id || seen.has(item.id)) continue;
-      seen.add(item.id);
-      collected.push(item);
-      if (collected.length >= SHUFFLE_POOL_SIZE) return true;
-    }
-    return false;
-  };
-
-  const wantPages = Math.min(
-    Math.ceil(SHUFFLE_POOL_SIZE / TMDB_DISCOVER_PAGE_SIZE),
-    Math.max(1, probe.totalPages || 1),
-    12
-  );
-
+  // Con anno filtrato: shuffle su tutte le pagine accessibili di quell’anno (max 10k TMDB)
   if (year) {
-    const maxPage = Math.max(1, probe.totalPages || 1);
-    const pageSet = new Set();
-    for (let i = 0; pageSet.size < wantPages && i < wantPages * 8; i++) {
-      pageSet.add(seededMapIndex(i, maxPage, `${dataKey}:pg:${contentBucket}`) + 1);
-    }
-    const pages = await mapPool([...pageSet], FETCH_CONCURRENCY, (p) =>
-      discoverPage(baseDiscover, p)
+    const universe = Math.max(
+      1,
+      probe.accessible ||
+        Math.min(liveTotal, TMDB_DISCOVER_MAX_RESULTS) ||
+        TMDB_DISCOVER_PAGE_SIZE
     );
-    for (const results of pages) {
-      if (pushAll(results)) break;
-    }
-  } else {
-    // Campione per anno (varietà) ma poche probe: max ~wantPages anni
-    const years = yearList();
-    const jobs = [];
-    const seenJob = new Set();
-    for (let i = 0; jobs.length < wantPages && i < wantPages * 10; i++) {
-      const y =
-        years[seededMapIndex(i, years.length, `${dataKey}:y:${contentBucket}`)] ||
-        years[0];
-      const pageHint =
-        seededMapIndex(i, TMDB_DISCOVER_MAX_PAGE, `${dataKey}:p:${contentBucket}`) + 1;
-      const jk = `${y}:${pageHint}`;
-      if (seenJob.has(jk)) continue;
-      seenJob.add(jk);
-      jobs.push({ y, pageHint });
-    }
-
-    const yearProbes = new Map();
-    const yearsNeeded = [...new Set(jobs.map((j) => j.y))];
-    await mapPool(yearsNeeded, FETCH_CONCURRENCY, async (y) => {
-      const d = buildDiscoverParams({
-        mediaType: baseDiscover.mediaType,
-        genreIds,
-        year: y,
-        originCountry,
-      });
-      yearProbes.set(y, { discover: d, probe: await discoverProbe(d) });
-    });
-
-    const fetchList = [];
-    const uk = new Set();
-    for (const j of jobs) {
-      const entry = yearProbes.get(j.y);
-      if (!entry?.probe?.totalPages) continue;
-      const page = ((j.pageHint - 1) % entry.probe.totalPages) + 1;
-      const key = `${j.y}:${page}`;
-      if (uk.has(key)) continue;
-      uk.add(key);
-      fetchList.push({ discover: entry.discover, page });
-    }
-
-    const pageResults = await mapPool(fetchList, FETCH_CONCURRENCY, (f) =>
-      discoverPage(f.discover, f.page)
-    );
-    for (const results of pageResults) {
-      if (pushAll(results)) break;
-    }
+    const mapped = uniqueUniverseIndices(realSkip, limit, universe, seed);
+    const picks = mapped.map(({ idx, order }) => ({
+      page: Math.min(
+        TMDB_DISCOVER_MAX_PAGE,
+        Math.floor(idx / TMDB_DISCOVER_PAGE_SIZE) + 1
+      ),
+      offset: idx % TMDB_DISCOVER_PAGE_SIZE,
+      order,
+    }));
+    const rows = await itemsFromDiscoverPages(baseDiscover, picks);
+    const items = rows
+      .sort((a, b) => a.order - b.order)
+      .map((r) => r.item);
+    return {
+      items,
+      totalResults: liveTotal,
+      poolSize: liveTotal,
+      poolCached: false,
+      mode: 'full-db-shuffle',
+    };
   }
 
-  if (collected.length < SHUFFLE_POOL_SIZE) {
-    const maxPage = Math.max(1, probe.totalPages || 1);
-    const pagesNeeded = Math.min(
-      Math.ceil((SHUFFLE_POOL_SIZE - collected.length) / TMDB_DISCOVER_PAGE_SIZE) + 1,
-      8
+  // Nessun anno: universo virtuale = anni × fino a 10k/anno (oltre il tetto Discover)
+  const years = yearList();
+  const virtualPerYear = TMDB_DISCOVER_MAX_RESULTS;
+  const universe = Math.max(1, years.length * virtualPerYear);
+  const mapped = uniqueUniverseIndices(realSkip, limit, universe, seed);
+
+  const planned = mapped.map(({ idx, order }) => {
+    const y = years[seededMapIndex(idx, years.length, `${seed}:yr`)] || years[0];
+    const local = seededMapIndex(idx, virtualPerYear, `${seed}:loc`);
+    return { y, local, order };
+  });
+
+  const yearsNeeded = [...new Set(planned.map((p) => p.y))];
+  const yearPacks = new Map();
+  await mapPool(yearsNeeded, FETCH_CONCURRENCY, async (y) => {
+    yearPacks.set(y, await probeYearDiscover(mediaType, genreIds, originCountry, y));
+  });
+
+  const picksByDiscover = new Map();
+  for (const p of planned) {
+    const pack = yearPacks.get(p.y);
+    if (!pack) continue;
+    const local = p.local % pack.accessible;
+    const page = Math.min(
+      pack.totalPages,
+      Math.floor(local / TMDB_DISCOVER_PAGE_SIZE) + 1
     );
-    const pageNums = [];
-    for (let i = 0; i < pagesNeeded; i++) {
-      pageNums.push(
-        seededMapIndex(i, maxPage, `${dataKey}:fill:${contentBucket}`) + 1
-      );
+    const offset = local % TMDB_DISCOVER_PAGE_SIZE;
+    const key = String(p.y);
+    if (!picksByDiscover.has(key)) {
+      picksByDiscover.set(key, { discover: pack.discover, picks: [] });
     }
-    const fillPages = await mapPool([...new Set(pageNums)], FETCH_CONCURRENCY, (p) =>
-      discoverPage(baseDiscover, p)
-    );
-    for (const results of fillPages) {
-      if (pushAll(results)) break;
-    }
+    picksByDiscover.get(key).picks.push({ page, offset, order: p.order });
   }
 
-  const pool = {
-    items: collected.slice(0, SHUFFLE_POOL_SIZE),
-    totalResults: probe.totalResults,
-    poolSize: Math.min(collected.length, SHUFFLE_POOL_SIZE),
-    mode: year ? 'content-pool-year' : 'content-pool',
+  const ordered = new Array(limit);
+  await mapPool([...picksByDiscover.values()], 2, async (entry) => {
+    const rows = await itemsFromDiscoverPages(entry.discover, entry.picks);
+    for (const { order, item } of rows) {
+      ordered[order] = item;
+    }
+  });
+
+  const seen = new Set();
+  const deduped = [];
+  for (const it of ordered) {
+    if (!it?.id || seen.has(it.id)) continue;
+    seen.add(it.id);
+    deduped.push(it);
+  }
+
+  return {
+    items: deduped,
+    totalResults: liveTotal,
+    poolSize: liveTotal,
+    poolCached: false,
+    mode: 'full-db-shuffle',
   };
-  cacheSet(poolKey, pool, refreshSec + 120);
-  return { ...pool, poolCached: false };
 }
 
 export async function buildCatalog({ type, id, extra = {} }) {
@@ -438,31 +478,16 @@ export async function buildCatalog({ type, id, extra = {} }) {
       year,
       originCountry,
     });
-    // Totale sempre fresco da TMDB (non dal pool cache)
-    const probe = await discoverProbe(baseDiscover, {
-      maxAgeMs: config.tmdbProbeMaxAgeMs,
-    });
-    liveTotal = probe.totalResults;
-    const pool = await getContentPool({
+    window = await loadFullDbShuffleWindow({
       baseDiscover,
       genreIds,
       year,
       originCountry,
-      dataKey,
-      intervalSec,
+      seed,
+      realSkip,
+      limit,
     });
-    const ordered = orderBySeed(pool.items, seed);
-    const sliceItems =
-      realSkip >= ordered.length
-        ? []
-        : ordered.slice(realSkip, realSkip + limit);
-    window = {
-      items: sliceItems,
-      totalResults: liveTotal,
-      poolSize: pool.poolSize,
-      poolCached: pool.poolCached,
-      mode: pool.mode,
-    };
+    liveTotal = window.totalResults;
   }
 
   let slice = window.items || [];

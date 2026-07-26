@@ -13,8 +13,6 @@ services:
         sync: false
       - key: CUSTOM_POSTERS
         value: "1"
-      - key: SHUFFLE_POOL_SIZE
-        value: "150"
       - key: CATALOG_PAGE_SIZE
         value: "50"
       - key: POSTER_CONCURRENCY

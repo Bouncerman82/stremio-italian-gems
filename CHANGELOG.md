@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.2.0 — 2026-07-26
+
+### Shuffle sul catalogo completo
+- Mix generale: niente più campione fisso (150/500)
+- Ogni apertura pesca a caso da **tutto** lo spazio TMDB dei filtri
+- Sharding per anno per superare il tetto Discover da 10k
+- In elenco solo titoli con ID IMDb (compatibilità stream)
+- Restano veloci: si scaricano solo ~50 titoli per pagina
+
 ## 3.1.4 — 2026-07-26
 
 ### Più veloce su Render
