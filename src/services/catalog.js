@@ -15,7 +15,7 @@ import {
 import { buildCountTileDescription } from '../lib/copy.js';
 import { toStremioMeta } from '../lib/meta.js';
 import { fisherYatesShuffle, hashString, seededMapIndex } from '../lib/shuffle.js';
-import { renderPostersForMovies } from '../posters/renderer.js';
+import { customPosterUrlForItem } from '../posters/renderer.js';
 import { DAY_SECONDS, cacheGet, cacheSet } from './cache.js';
 import {
   attachImdbIds,
@@ -463,16 +463,11 @@ export async function buildCatalog({ type, id, extra = {} }) {
   let slice = window.items || [];
   slice = await attachImdbIds(slice, mediaType === 'tv' ? 'tv' : 'movie');
 
-  let posterMap = new Map();
-  if (config.customPosters) {
-    posterMap = await renderPostersForMovies(slice);
-  }
-
   const metas = slice
     .map((item) =>
       toStremioMeta(item, {
         mediaType: stremioType,
-        customPosterUrl: posterMap.get(item.id) || null,
+        customPosterUrl: customPosterUrlForItem(item),
       })
     )
     .filter(Boolean);

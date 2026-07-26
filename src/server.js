@@ -20,6 +20,10 @@ import {
   buildGenrePageData,
   buildSchedaPageData,
 } from './services/metaDetail.js';
+import {
+  handleBadgePoster,
+  probeTmdbImageFetch,
+} from './posters/renderer.js';
 
 try {
   dns.setDefaultResultOrder('ipv4first');
@@ -50,6 +54,20 @@ app.get('/health', (_req, res) => {
     version: manifest.version,
     uptimeSec: Math.floor((Date.now() - startedAt) / 1000),
     posters: config.customPosters,
+  });
+});
+
+/** Diagnostica: Render riesce a scaricare image.tmdb.org? */
+app.get('/health/poster-probe', async (_req, res) => {
+  const probe = await probeTmdbImageFetch();
+  res.status(probe.ok ? 200 : 503).json({ version: manifest.version, ...probe });
+});
+
+/** Locandine con tag: generate on-demand (catalogo non blocca sul download TMDB). */
+app.get('/badge-poster/:tmdbId.jpg', (req, res) => {
+  handleBadgePoster(req, res).catch((err) => {
+    console.error('[badge-poster]', err.message);
+    res.status(500).type('text').send('poster error');
   });
 });
 

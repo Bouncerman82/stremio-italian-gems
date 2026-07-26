@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.1.3 — 2026-07-26
+
+### Tag locandine (approccio lazy)
+- Catalogo restituisce subito `/badge-poster/…` (niente download in batch)
+- Download TMDB forzato su IPv4 via `https` + SNI
+- Se Render non raggiunge TMDB → redirect 302 (poster senza tag, ma catalogo ok)
+- Endpoint `/health/poster-probe` per diagnostica
+
 ## 3.1.2 — 2026-07-26
 
 ### Fix tag locandine (Render)
