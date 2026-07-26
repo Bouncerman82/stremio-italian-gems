@@ -175,12 +175,70 @@ function hashDay(id, daySeed) {
 }
 
 export function prioritizeItalianLanguage(items) {
+  return rankItalianHybrid(items, { soft: false });
+}
+
+/**
+ * Tier IT ibrido (probabilità audio IT, non certezza doppiaggio):
+ *   A — original_language=it oppure origin_country/production IT
+ *   B — proveniente da Discover region=IT (visibilità IT)
+ *   C — resto del pool (fill generoso)
+ */
+export function italianHybridTier(item) {
+  if (!item) return 2;
+  const lang = String(item.original_language || '').toLowerCase();
+  if (lang === 'it') return 0;
+  const origins = item.origin_country || [];
+  if (Array.isArray(origins) && origins.some((c) => String(c).toUpperCase() === 'IT')) {
+    return 0;
+  }
+  const prod = item.production_countries || [];
+  if (
+    Array.isArray(prod) &&
+    prod.some((c) => String(c?.iso_3166_1 || c).toUpperCase() === 'IT')
+  ) {
+    return 0;
+  }
+  if (item._regionIt || item._itTier === 'B') return 1;
+  return 2;
+}
+
+/**
+ * Ranking ibrido generoso: A → B → C, senza hard-exclude.
+ * soft=true: solo riordina per tier (ordine relativo entro il tier resta), per full-db shuffle.
+ */
+export function rankItalianHybrid(items, { soft = false } = {}) {
+  if (soft) {
+    const buckets = [[], [], []];
+    for (const item of items) {
+      buckets[italianHybridTier(item)].push(item);
+    }
+    return [...buckets[0], ...buckets[1], ...buckets[2]];
+  }
   return [...items].sort((a, b) => {
-    const aIt = a.original_language === 'it' ? 0 : 1;
-    const bIt = b.original_language === 'it' ? 0 : 1;
-    if (aIt !== bIt) return aIt - bIt;
+    const ta = italianHybridTier(a);
+    const tb = italianHybridTier(b);
+    if (ta !== tb) return ta - tb;
     return Number(b.vote_average || 0) - Number(a.vote_average || 0);
   });
+}
+
+function markRegionIt(items) {
+  return (items || []).map((it) => ({ ...it, _regionIt: true, _itTier: 'B' }));
+}
+
+function mergeDedupePreferHigherTier(...lists) {
+  const best = new Map();
+  for (const list of lists) {
+    for (const item of list || []) {
+      if (!item?.id) continue;
+      const prev = best.get(item.id);
+      if (!prev || italianHybridTier(item) < italianHybridTier(prev)) {
+        best.set(item.id, item);
+      }
+    }
+  }
+  return [...best.values()];
 }
 
 function dedupeById(pages) {
@@ -213,9 +271,13 @@ export function buildDiscoverParams({
   mediaType = 'movie',
   genreIds = [],
   year = null,
+  yearRange = null,
   originCountry = null,
   popularRecent = false,
   sortBy = 'popularity.desc',
+  originalLanguage = null,
+  region = null,
+  watchRegion = null,
 } = {}) {
   const isMovie = mediaType === 'movie';
   const path = isMovie ? '/discover/movie' : '/discover/tv';
@@ -225,6 +287,9 @@ export function buildDiscoverParams({
     'vote_count.gte': popularRecent ? undefined : 10,
     with_genres: genreIds.length ? genreIds.join('|') : undefined,
     with_origin_country: originCountry || undefined,
+    with_original_language: originalLanguage || undefined,
+    region: region || undefined,
+    watch_region: watchRegion || undefined,
   };
 
   if (popularRecent) {
@@ -234,6 +299,11 @@ export function buildDiscoverParams({
   } else if (year) {
     if (isMovie) params.primary_release_year = year;
     else params.first_air_date_year = year;
+  } else if (yearRange) {
+    const dateGte = isMovie ? 'primary_release_date.gte' : 'first_air_date.gte';
+    const dateLte = isMovie ? 'primary_release_date.lte' : 'first_air_date.lte';
+    if (yearRange.gte != null) params[dateGte] = `${yearRange.gte}-01-01`;
+    if (yearRange.lte != null) params[dateLte] = `${yearRange.lte}-12-31`;
   }
 
   return { path, params, mediaType: isMovie ? 'movie' : 'tv' };
@@ -346,26 +416,54 @@ export async function discoverSeries(options = {}) {
 }
 
 /**
- * Ultime 100 uscite popolari negli ultimi 2 mesi (cache settimanale a livello catalog).
- * La finestra temporale scorre coi mesi; lo shuffle è solo su questi ≤100 titoli.
+ * Ultime 100 uscite popolari negli ultimi 2 mesi.
+ * Dual-query ibrido generoso: lingua IT + region IT, fill globale se serve.
  */
 export async function discoverPopularRecent(mediaType, genreIds = [], originCountry = null) {
-  const discover = buildDiscoverParams({
+  const pages = [1, 2, 3, 4, 5];
+  const fetchPages = (discover) =>
+    Promise.all(
+      pages.map((page) => discoverPage(discover, page).then((r) => ({ results: r })))
+    );
+
+  const baseOpts = {
     mediaType,
     genreIds,
     popularRecent: true,
     originCountry,
-  });
-  const pages = [1, 2, 3, 4, 5];
-  const results = await Promise.all(
-    pages.map((page) => discoverPage(discover, page).then((r) => ({ results: r })))
-  );
-  return prioritizeItalianLanguage(dedupeById(results)).slice(0, 100);
+  };
+
+  // Se l'utente ha già scelto un paese, una sola query (con boost IT)
+  if (originCountry) {
+    const discover = buildDiscoverParams(baseOpts);
+    const results = await fetchPages(discover);
+    return rankItalianHybrid(dedupeById(results)).slice(0, 100);
+  }
+
+  const [langPages, regionPages, fillPages] = await Promise.all([
+    fetchPages(
+      buildDiscoverParams({ ...baseOpts, originalLanguage: 'it' })
+    ),
+    fetchPages(
+      buildDiscoverParams({
+        ...baseOpts,
+        region: 'IT',
+        watchRegion: 'IT',
+      })
+    ),
+    fetchPages(buildDiscoverParams(baseOpts)),
+  ]);
+
+  const tierA = dedupeById(langPages);
+  const tierB = markRegionIt(dedupeById(regionPages));
+  const tierC = dedupeById(fillPages);
+  const merged = mergeDedupePreferHigherTier(tierA, tierB, tierC);
+  return rankItalianHybrid(merged).slice(0, 100);
 }
 
 /**
  * Top 100: voto ≥ 6,5, max 30 anni, preferenza ultimi 5, generi misti.
- * Lista ricostruita ogni giorno (daySeed); shuffle catalogo solo su questi 100.
+ * Dual-query IT (lingua + region) + fill generoso; lista giornaliera.
  */
 export async function discoverTop100(mediaType, genreIds = [], originCountry = null) {
   const isMovie = mediaType !== 'tv';
@@ -384,78 +482,99 @@ export async function discoverTop100(mediaType, genreIds = [], originCountry = n
     with_genres: genreIds.length ? genreIds.join('|') : undefined,
   };
 
-  const jobs = [];
-  // Recenti (0–5 anni)
-  for (const page of [1, 2, 3, 4]) {
-    jobs.push(
-      discoverPage(
-        {
-          path,
-          params: {
-            ...base,
-            'vote_average.gte': minVote,
-            'vote_count.gte': isMovie ? 150 : 60,
-            [dateGte]: from5,
-          },
-          mediaType: isMovie ? 'movie' : 'tv',
-        },
-        page
-      ).then((r) => ({ results: r }))
-    );
-  }
-  // Classici (5–30 anni): stesso voto minimo 6,5+, un po’ più voti per qualità
-  for (const page of [1, 2, 3]) {
-    jobs.push(
-      discoverPage(
-        {
-          path,
-          params: {
-            ...base,
-            'vote_average.gte': minVote,
-            'vote_count.gte': isMovie ? 250 : 80,
-            [dateGte]: from30,
-            [dateLte]: from5,
-          },
-          mediaType: isMovie ? 'movie' : 'tv',
-        },
-        page
-      ).then((r) => ({ results: r }))
-    );
-  }
-
-  // Extra per genere → più varietà (solo se non c’è già un genere scelto)
-  if (!genreIds.length) {
-    const variety = isMovie
-      ? [28, 35, 18, 27, 878, 53, 12, 16, 10749, 80]
-      : [35, 18, 80, 10765, 9648, 10759, 16, 10751];
-    for (const g of variety) {
+  function jobsFor(extraParams = {}) {
+    const jobs = [];
+    const params = { ...base, ...extraParams };
+    // Recenti (0–5 anni)
+    for (const page of [1, 2, 3, 4]) {
       jobs.push(
         discoverPage(
           {
             path,
             params: {
-              ...base,
-              with_genres: String(g),
+              ...params,
               'vote_average.gte': minVote,
               'vote_count.gte': isMovie ? 150 : 60,
-              [dateGte]: from30,
+              [dateGte]: from5,
             },
             mediaType: isMovie ? 'movie' : 'tv',
           },
-          1
+          page
         ).then((r) => ({ results: r }))
       );
     }
+    // Classici (5–30 anni)
+    for (const page of [1, 2, 3]) {
+      jobs.push(
+        discoverPage(
+          {
+            path,
+            params: {
+              ...params,
+              'vote_average.gte': minVote,
+              'vote_count.gte': isMovie ? 250 : 80,
+              [dateGte]: from30,
+              [dateLte]: from5,
+            },
+            mediaType: isMovie ? 'movie' : 'tv',
+          },
+          page
+        ).then((r) => ({ results: r }))
+      );
+    }
+    // Extra per genere → varietà
+    if (!genreIds.length) {
+      const variety = isMovie
+        ? [28, 35, 18, 27, 878, 53, 12, 16, 10749, 80]
+        : [35, 18, 80, 10765, 9648, 10759, 16, 10751];
+      for (const g of variety) {
+        jobs.push(
+          discoverPage(
+            {
+              path,
+              params: {
+                ...params,
+                with_genres: String(g),
+                'vote_average.gte': minVote,
+                'vote_count.gte': isMovie ? 150 : 60,
+                [dateGte]: from30,
+              },
+              mediaType: isMovie ? 'movie' : 'tv',
+            },
+            1
+          ).then((r) => ({ results: r }))
+        );
+      }
+    }
+    return jobs;
   }
 
-  const pages = await Promise.all(jobs);
-  const candidates = dedupeById(pages).filter((item) => {
-    const d = itemReleaseISO(item);
-    if (!d || d < from30) return false;
-    return Number(item.vote_average || 0) >= minVote;
-  });
-  const picked = pickDiverseTop100(candidates, daySeed);
-  return prioritizeItalianLanguage(picked).slice(0, 100);
+  const filterCandidates = (pages) =>
+    dedupeById(pages).filter((item) => {
+      const d = itemReleaseISO(item);
+      if (!d || d < from30) return false;
+      return Number(item.vote_average || 0) >= minVote;
+    });
+
+  // Paese esplicito → una sola passata + rank IT
+  if (originCountry) {
+    const pages = await Promise.all(jobsFor());
+    const picked = pickDiverseTop100(filterCandidates(pages), daySeed);
+    return rankItalianHybrid(picked).slice(0, 100);
+  }
+
+  const [langPages, regionPages, fillPages] = await Promise.all([
+    Promise.all(jobsFor({ with_original_language: 'it' })),
+    Promise.all(jobsFor({ region: 'IT', watch_region: 'IT' })),
+    Promise.all(jobsFor()),
+  ]);
+
+  const tierA = filterCandidates(langPages);
+  const tierB = markRegionIt(filterCandidates(regionPages));
+  const tierC = filterCandidates(fillPages);
+  const merged = mergeDedupePreferHigherTier(tierA, tierB, tierC);
+  const picked = pickDiverseTop100(merged, daySeed);
+  return rankItalianHybrid(picked).slice(0, 100);
 }
 
 export async function getImdbId(tmdbId, mediaType = 'movie') {

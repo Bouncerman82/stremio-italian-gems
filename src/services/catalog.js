@@ -4,6 +4,7 @@ import {
   parseIntervalSeconds,
   parseYear,
   parseOriginCountry,
+  parseGenreSelection,
   resolveGenreIds,
   resolveMoodGenreIds,
   wantsPopolari,
@@ -24,6 +25,7 @@ import {
   discoverPopularRecent,
   discoverTop100,
   discoverProbe,
+  rankItalianHybrid,
   TMDB_DISCOVER_PAGE_SIZE,
 } from './tmdb.js';
 
@@ -63,28 +65,49 @@ function yearList() {
     .sort((a, b) => b - a);
 }
 
-function describeActiveFilters(extra = {}, { popularRecent, top100, genreIds }) {
+function describeActiveFilters(extra = {}, { popularRecent, top100, genreIds, genreSel }) {
   const parts = [];
   if (top100) parts.push('Top 100 · voto 6,5+');
   else if (popularRecent) parts.push('Popolari ultimi 2 mesi');
+  else if (genreSel?.year) parts.push(`Anno: ${genreSel.year}`);
+  else if (genreSel?.yearRange) {
+    const { gte, lte } = genreSel.yearRange;
+    if (gte == null) parts.push(`Anni: pre-${(lte || 1999) + 1}`);
+    else parts.push(`Anni: ${gte}-${lte}`);
+  } else if (genreSel?.mood) parts.push(`Mood: ${genreSel.mood}`);
   else if (
     extra.genre &&
     !String(extra.genre).startsWith('Tutti') &&
     !isPopolariGenre(extra.genre) &&
-    !isTop100Genre(extra.genre)
+    !isTop100Genre(extra.genre) &&
+    !String(extra.genre).startsWith('Anno') &&
+    !String(extra.genre).startsWith('Anni') &&
+    !String(extra.genre).startsWith('Mood') &&
+    !String(extra.genre).startsWith('Paese') &&
+    !String(extra.genre).startsWith('Intervallo')
   ) {
     parts.push(`Genere: ${extra.genre}`);
   } else {
     parts.push('Tutti i generi');
   }
+  // Extra desktop (se presenti) o mood/paese/anno dal genere TV già gestiti sopra
   if (extra.mood && !String(extra.mood).startsWith('Tutti')) {
-    parts.push(`Mood: ${extra.mood}`);
+    if (!genreSel?.mood || extra.mood !== genreSel.mood) {
+      // evita doppio "Mood:" se arriva solo dal genere
+      const idx = parts.findIndex((p) => p.startsWith('Mood:'));
+      if (idx >= 0) parts[idx] = `Mood: ${extra.mood}`;
+      else parts.push(`Mood: ${extra.mood}`);
+    }
   }
   if (extra.anno && !String(extra.anno).startsWith('Tutti')) {
-    parts.push(`Anno: ${extra.anno}`);
+    const idx = parts.findIndex((p) => p.startsWith('Anno:') || p.startsWith('Anni:'));
+    if (idx >= 0) parts[idx] = `Anno: ${extra.anno}`;
+    else parts.push(`Anno: ${extra.anno}`);
   }
   if (extra.paese && !String(extra.paese).startsWith('Tutti')) {
     parts.push(`Paese: ${extra.paese}`);
+  } else if (genreSel?.originCountry && !extra.paese) {
+    parts.push(`Paese: ${genreSel.originCountry}`);
   }
   return parts.join(' · ');
 }
@@ -184,7 +207,7 @@ async function loadPopularWindow({
     rebuilt = true;
   }
   const { seed } = shuffleSeed({ dataKey: dayKey, intervalSec });
-  const ordered = orderBySeed(items, seed);
+  const ordered = rankItalianHybrid(orderBySeed(items, seed), { soft: true });
   return {
     items: ordered.slice(realSkip, realSkip + limit),
     totalResults: items.length,
@@ -216,7 +239,7 @@ async function loadTop100Window({
     rebuilt = true;
   }
   const { seed } = shuffleSeed({ dataKey: dayKey, intervalSec });
-  const ordered = orderBySeed(items, seed);
+  const ordered = rankItalianHybrid(orderBySeed(items, seed), { soft: true });
   return {
     items: ordered.slice(realSkip, realSkip + limit),
     totalResults: items.length,
@@ -251,11 +274,13 @@ async function probeYearDiscover(mediaType, genreIds, originCountry, year) {
  * Strategia: per ogni pagina Stremio si scelgono pochi anni (seed),
  * da ciascuno 1–2 pagine Discover intere → varietà sul DB senza
  * 50 probe/fetch sparse (che rendevano tutto lentissimo).
+ * Soft boost IT dopo il merge (senza chiudere il catalogo).
  */
 async function loadFullDbShuffleWindow({
   baseDiscover,
   genreIds,
   year,
+  yearRange,
   originCountry,
   seed,
   realSkip,
@@ -294,13 +319,41 @@ async function loadFullDbShuffleWindow({
     return orderBySeed(items, `${seed}:${salt}`).slice(0, want);
   }
 
-  if (year) {
+  if (year || yearRange) {
     const pack = {
       discover: baseDiscover,
       accessible: Math.max(1, probe.accessible || TMDB_DISCOVER_PAGE_SIZE),
       totalPages: Math.max(1, probe.totalPages || 1),
     };
-    const items = await fillFromPack(pack, `y${year}:b${pageBucket}`, limit);
+    const salt = year
+      ? `y${year}:b${pageBucket}`
+      : `yr${yearRange?.gte || 'x'}-${yearRange?.lte || 'x'}:b${pageBucket}`;
+    let items = await fillFromPack(pack, salt, Math.ceil(limit * 1.35));
+    // Densità IT opzionale: una pagina extra con lingua originale IT
+    try {
+      const itDiscover = buildDiscoverParams({
+        mediaType,
+        genreIds,
+        year: year || undefined,
+        yearRange: year ? null : yearRange,
+        originCountry,
+        originalLanguage: 'it',
+      });
+      const itPage = await discoverPage(itDiscover, 1);
+      if (itPage?.length) {
+        const seen = new Set(items.map((i) => i.id));
+        for (const row of itPage) {
+          if (!row?.id || seen.has(row.id)) continue;
+          seen.add(row.id);
+          items.push(row);
+        }
+      }
+    } catch {
+      // ignore
+    }
+    items = rankItalianHybrid(orderBySeed(items, `${seed}:${salt}:it`), {
+      soft: true,
+    }).slice(0, Math.ceil(limit * 1.35));
     return {
       items,
       totalResults: liveTotal,
@@ -334,6 +387,24 @@ async function loadFullDbShuffleWindow({
     fillFromPack(pack, `y${y}:b${pageBucket}`, perYear)
   );
 
+  // Frazione IT: una pagina lingua originale it su un anno campionato
+  try {
+    const itYear =
+      pickedYears[seededMapIndex(pageBucket, pickedYears.length, `${seed}:ity`)] ||
+      pickedYears[0];
+    const itDiscover = buildDiscoverParams({
+      mediaType,
+      genreIds,
+      year: itYear,
+      originCountry,
+      originalLanguage: 'it',
+    });
+    const itPage = await discoverPage(itDiscover, 1);
+    if (itPage?.length) chunks.push(itPage);
+  } catch {
+    // ignore
+  }
+
   const seen = new Set();
   const merged = [];
   for (const chunk of chunks) {
@@ -344,7 +415,8 @@ async function loadFullDbShuffleWindow({
     }
   }
 
-  const items = orderBySeed(merged, `${seed}:merge:${pageBucket}`).slice(
+  const shuffled = orderBySeed(merged, `${seed}:merge:${pageBucket}`);
+  const items = rankItalianHybrid(shuffled, { soft: true }).slice(
     0,
     Math.ceil(limit * 1.35)
   );
@@ -370,17 +442,69 @@ export async function buildCatalog({ type, id, extra = {} }) {
     return { metas: [], totalItems: 0, skip: 0 };
   }
 
-  const intervalSec = parseIntervalSeconds(extra.intervallo, 0);
+  // Genere TV (prefissi) + extras desktop: gli extra espliciti vincono
+  const genreSel = parseGenreSelection(extra.genre, stremioType);
+  const hasExplicitAnno =
+    extra.anno !== undefined &&
+    extra.anno !== null &&
+    extra.anno !== '' &&
+    !String(extra.anno).startsWith('Tutti');
+  const hasExplicitMood =
+    extra.mood !== undefined &&
+    extra.mood !== null &&
+    extra.mood !== '' &&
+    !String(extra.mood).startsWith('Tutti');
+  const hasExplicitPaese =
+    extra.paese !== undefined &&
+    extra.paese !== null &&
+    extra.paese !== '' &&
+    !String(extra.paese).startsWith('Tutti');
+  const hasExplicitIntervallo =
+    extra.intervallo !== undefined &&
+    extra.intervallo !== null &&
+    extra.intervallo !== '';
+
+  const year = hasExplicitAnno
+    ? parseYear(extra.anno)
+    : genreSel.year;
+  const yearRange =
+    hasExplicitAnno || year ? null : genreSel.yearRange;
+  const originCountry = hasExplicitPaese
+    ? parseOriginCountry(extra.paese)
+    : genreSel.originCountry;
+  const intervalSec = hasExplicitIntervallo
+    ? parseIntervalSeconds(extra.intervallo, 0)
+    : genreSel.intervalSec != null
+      ? genreSel.intervalSec
+      : parseIntervalSeconds(extra.intervallo, 0);
+
   const skip = parseSkip(extra);
-  const year = parseYear(extra.anno);
-  const originCountry = parseOriginCountry(extra.paese);
   const popularRecent =
-    wantsPopolari(extra.popolari) || isPopolariGenre(extra.genre);
-  const top100 = !popularRecent && isTop100Genre(extra.genre);
-  const genreIds = mergeGenreIds(
-    resolveGenreIds(stremioType, extra.genre),
-    resolveMoodGenreIds(extra.mood, stremioType)
-  );
+    wantsPopolari(extra.popolari) ||
+    genreSel.special === 'popolari' ||
+    isPopolariGenre(extra.genre);
+  const top100 =
+    !popularRecent &&
+    (genreSel.special === 'top100' || isTop100Genre(extra.genre));
+
+  const moodIds = hasExplicitMood
+    ? resolveMoodGenreIds(extra.mood, stremioType)
+    : genreSel.mood
+      ? resolveMoodGenreIds(genreSel.mood, stremioType)
+      : [];
+  // Solo genere TMDB classico (non Anno/Mood/Paese/Intervallo/special)
+  const classicGenreIds =
+    genreSel.special ||
+    genreSel.year ||
+    genreSel.yearRange ||
+    genreSel.mood ||
+    genreSel.originCountry ||
+    genreSel.intervalSec != null
+      ? []
+      : genreSel.tmdbGenreIds.length
+        ? genreSel.tmdbGenreIds
+        : resolveGenreIds(stremioType, extra.genre);
+  const finalGenreIds = mergeGenreIds(classicGenreIds, moodIds);
 
   let includeCountTile = false;
   let realSkip = skip;
@@ -397,14 +521,21 @@ export async function buildCatalog({ type, id, extra = {} }) {
   const filterLabel = describeActiveFilters(extra, {
     popularRecent,
     top100,
-    genreIds,
+    genreIds: finalGenreIds,
+    genreSel: {
+      ...genreSel,
+      year: year || genreSel.year,
+      yearRange,
+      mood: hasExplicitMood ? extra.mood : genreSel.mood,
+      originCountry,
+    },
   });
   const dataKey = [
     mediaType,
     top100 ? 'top100' : popularRecent ? 'pop' : 'all',
-    `g:${(genreIds || []).join('-') || 'any'}`,
-    `y:${year || 'any'}`,
-    `m:${extra.mood || 'any'}`,
+    `g:${(finalGenreIds || []).join('-') || 'any'}`,
+    `y:${year || (yearRange ? `${yearRange.gte || 'x'}-${yearRange.lte || 'x'}` : 'any')}`,
+    `m:${hasExplicitMood ? extra.mood : genreSel.mood || 'any'}`,
     `c:${originCountry || 'any'}`,
   ].join(':');
 
@@ -415,36 +546,38 @@ export async function buildCatalog({ type, id, extra = {} }) {
   if (top100) {
     window = await loadTop100Window({
       mediaType,
-      genreIds,
+      genreIds: finalGenreIds,
       originCountry,
       intervalSec,
       realSkip,
       limit,
-      cacheKey: `top100:v65:${dataKey}`,
+      cacheKey: `top100:v65it:${dataKey}`,
     });
     liveTotal = window.totalResults;
   } else if (popularRecent) {
     window = await loadPopularWindow({
       mediaType,
-      genreIds,
+      genreIds: finalGenreIds,
       originCountry,
       intervalSec,
       realSkip,
       limit,
-      cacheKey: `pop:${dataKey}`,
+      cacheKey: `pop:it:${dataKey}`,
     });
     liveTotal = window.totalResults;
   } else {
     const baseDiscover = buildDiscoverParams({
       mediaType: mediaType === 'tv' ? 'tv' : 'movie',
-      genreIds,
+      genreIds: finalGenreIds,
       year,
+      yearRange,
       originCountry,
     });
     window = await loadFullDbShuffleWindow({
       baseDiscover,
-      genreIds,
+      genreIds: finalGenreIds,
       year,
+      yearRange,
       originCountry,
       seed,
       realSkip,

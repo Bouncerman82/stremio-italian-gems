@@ -108,12 +108,63 @@ export const TOP100_GENRE = 'Top 100 — voto 6,5+';
 /** Soglia minima voto TMDB per la Top 100 (film e serie). */
 export const TOP100_MIN_VOTE = 6.5;
 
+/** Prefissi menu Genere (Android TV: un solo filtro alla volta). */
+export const GENRE_PREFIX = {
+  anno: 'Anno · ',
+  anni: 'Anni · ',
+  mood: 'Mood · ',
+  paese: 'Paese · ',
+  intervallo: 'Intervallo · ',
+};
+
+/** Paesi in evidenza sotto Genere (lista corta per TV). */
+export const TV_GENRE_COUNTRIES = [
+  'Italia',
+  'Stati Uniti',
+  'Regno Unito',
+  'Francia',
+  'Spagna',
+  'Germania',
+  'Giappone',
+  'Corea del Sud',
+];
+
+/** Fasce anni nel menu Genere. */
+export const YEAR_RANGE_OPTIONS = [
+  { label: 'Anni · 2010-2019', gte: 2010, lte: 2019 },
+  { label: 'Anni · 2000-2009', gte: 2000, lte: 2009 },
+  { label: 'Anni · pre-2000', gte: null, lte: 1999 },
+];
+
+/** Intervalli sotto Genere (etichette corte per TV). */
+export const GENRE_INTERVAL_OPTIONS = [
+  { label: 'Intervallo · Sempre nuovo', seconds: 0 },
+  { label: 'Intervallo · 5 min', seconds: 300 },
+  { label: 'Intervallo · 30 min', seconds: 1800 },
+  { label: 'Intervallo · 1 ora', seconds: 3600 },
+];
+
+function yearGenreOptions(count = 25) {
+  const current = new Date().getFullYear();
+  const out = [];
+  for (let y = current; y > current - count; y--) {
+    out.push(`${GENRE_PREFIX.anno}${y}`);
+  }
+  return out;
+}
+
 export function genreOptionsFor(mediaType) {
   const map = mediaType === 'series' ? TV_GENRES : MOVIE_GENRES;
-  // Speciali in cima al menu Genere di Stremio
+  const moods = mediaType === 'series' ? MOODS_TV : MOODS_MOVIE;
+  // Speciali + filtri TV (prefissi) + generi TMDB
   return [
     POPOLARI_GENRE,
     TOP100_GENRE,
+    ...yearGenreOptions(25),
+    ...YEAR_RANGE_OPTIONS.map((r) => r.label),
+    ...Object.keys(moods).map((m) => `${GENRE_PREFIX.mood}${m}`),
+    ...TV_GENRE_COUNTRIES.map((c) => `${GENRE_PREFIX.paese}${c}`),
+    ...GENRE_INTERVAL_OPTIONS.map((i) => i.label),
     'Tutti i generi',
     ...Object.keys(map).sort((a, b) => a.localeCompare(b, 'it')),
   ];
@@ -122,12 +173,21 @@ export function genreOptionsFor(mediaType) {
 export function isPopolariGenre(genreName) {
   if (!genreName) return false;
   const v = String(genreName).toLowerCase();
+  // Evita falsi positivi su altre voci
+  if (v.startsWith('anno') || v.startsWith('anni') || v.startsWith('mood') ||
+      v.startsWith('paese') || v.startsWith('intervallo')) {
+    return false;
+  }
   return v.includes('popolari') || v.includes('ultimi 2');
 }
 
 export function isTop100Genre(genreName) {
   if (!genreName) return false;
   const v = String(genreName).toLowerCase();
+  if (v.startsWith('anno') || v.startsWith('anni') || v.startsWith('mood') ||
+      v.startsWith('paese') || v.startsWith('intervallo')) {
+    return false;
+  }
   return (
     v.includes('top 100') ||
     v.includes('top100') ||
@@ -139,6 +199,90 @@ export function isTop100Genre(genreName) {
 /** Genere “speciale” (non TMDB): Popolari / Top 100. */
 export function isSpecialCatalogGenre(genreName) {
   return isPopolariGenre(genreName) || isTop100Genre(genreName);
+}
+
+/**
+ * Parser della scelta Genere (TV + desktop).
+ * @returns {{
+ *   special: 'popolari'|'top100'|null,
+ *   year: number|null,
+ *   yearRange: { gte: number|null, lte: number|null }|null,
+ *   mood: string|null,
+ *   originCountry: string|null,
+ *   intervalSec: number|null,
+ *   tmdbGenreIds: number[],
+ * }}
+ */
+export function parseGenreSelection(genreName, mediaType = 'movie') {
+  const empty = {
+    special: null,
+    year: null,
+    yearRange: null,
+    mood: null,
+    originCountry: null,
+    intervalSec: null,
+    tmdbGenreIds: [],
+  };
+  if (!genreName || String(genreName).startsWith('Tutti')) return empty;
+
+  const raw = String(genreName).trim();
+
+  if (isPopolariGenre(raw)) {
+    return { ...empty, special: 'popolari' };
+  }
+  if (isTop100Genre(raw)) {
+    return { ...empty, special: 'top100' };
+  }
+
+  if (raw.startsWith(GENRE_PREFIX.anno)) {
+    const y = Number(raw.slice(GENRE_PREFIX.anno.length).trim());
+    return { ...empty, year: Number.isFinite(y) ? y : null };
+  }
+
+  if (raw.startsWith(GENRE_PREFIX.anni) || raw.startsWith('Anni ·')) {
+    const range = YEAR_RANGE_OPTIONS.find((r) => r.label === raw);
+    if (range) {
+      return { ...empty, yearRange: { gte: range.gte, lte: range.lte } };
+    }
+    // fallback: "Anni · 2010-2019" / "Anni · pre-2000"
+    const body = raw.replace(/^Anni\s*[·•\-–—]\s*/i, '').trim();
+    if (/^pre-?2000$/i.test(body)) {
+      return { ...empty, yearRange: { gte: null, lte: 1999 } };
+    }
+    const m = body.match(/(\d{4})\s*[-–—]\s*(\d{4})/);
+    if (m) {
+      return {
+        ...empty,
+        yearRange: { gte: Number(m[1]), lte: Number(m[2]) },
+      };
+    }
+    return empty;
+  }
+
+  if (raw.startsWith(GENRE_PREFIX.mood)) {
+    const mood = raw.slice(GENRE_PREFIX.mood.length).trim();
+    const ids = resolveMoodGenreIds(mood, mediaType);
+    return { ...empty, mood: mood || null, tmdbGenreIds: ids };
+  }
+
+  if (raw.startsWith(GENRE_PREFIX.paese)) {
+    const paese = raw.slice(GENRE_PREFIX.paese.length).trim();
+    return { ...empty, originCountry: parseOriginCountry(paese) };
+  }
+
+  if (raw.startsWith(GENRE_PREFIX.intervallo)) {
+    const body = raw.slice(GENRE_PREFIX.intervallo.length).trim();
+    const known = GENRE_INTERVAL_OPTIONS.find((i) => i.label === raw);
+    if (known) {
+      return { ...empty, intervalSec: known.seconds };
+    }
+    return { ...empty, intervalSec: parseIntervalSeconds(body, 0) };
+  }
+
+  // Genere TMDB classico
+  const map = mediaType === 'series' || mediaType === 'tv' ? TV_GENRES : MOVIE_GENRES;
+  const ids = map[raw] || [];
+  return { ...empty, tmdbGenreIds: ids };
 }
 
 export function moodOptions() {
@@ -166,6 +310,22 @@ export function resolveGenreIds(mediaType, genreName) {
     genreName.startsWith('Tutti') ||
     isSpecialCatalogGenre(genreName)
   ) {
+    return [];
+  }
+  // Prefissi TV (Anno/Mood/Paese/Intervallo): non sono generi TMDB
+  const raw = String(genreName);
+  if (
+    raw.startsWith(GENRE_PREFIX.anno) ||
+    raw.startsWith(GENRE_PREFIX.anni) ||
+    raw.startsWith('Anni ·') ||
+    raw.startsWith(GENRE_PREFIX.mood) ||
+    raw.startsWith(GENRE_PREFIX.paese) ||
+    raw.startsWith(GENRE_PREFIX.intervallo)
+  ) {
+    // Mood sotto Genere → ID mood; altri prefissi → nessun genere
+    if (raw.startsWith(GENRE_PREFIX.mood)) {
+      return resolveMoodGenreIds(raw.slice(GENRE_PREFIX.mood.length).trim(), mediaType);
+    }
     return [];
   }
   const map = mediaType === 'series' ? TV_GENRES : MOVIE_GENRES;
