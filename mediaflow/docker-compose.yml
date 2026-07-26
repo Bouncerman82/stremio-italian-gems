@@ -1,0 +1,15 @@
+services:
+  mediaflow:
+    image: mhdzumair/mediaflow-proxy:latest
+    container_name: mediaflow
+    restart: unless-stopped
+    ports:
+      - "8888:8888"
+    env_file:
+      - .env
+    environment:
+      - PORT=8888
+      - ENABLE_STREAMING_PROGRESS=false
+      - FORWARDED_ALLOW_IPS=*
+      - DISABLE_SSL_VERIFICATION_GLOBALLY=true
+      - TRANSPORT_ROUTES={"all://":{"verify_ssl":false}}

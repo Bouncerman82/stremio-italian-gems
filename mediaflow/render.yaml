@@ -1,0 +1,22 @@
+# Blueprint separato: crea un NUOVO servizio Render (non mischiare con Italian Gems).
+# Oppure da Dashboard: New → Web Service → questo repo → Root Directory = mediaflow
+services:
+  - type: web
+    name: mediaflow-stremio
+    runtime: docker
+    plan: free
+    region: frankfurt
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /
+    envVars:
+      - key: API_PASSWORD
+        value: ItalianGemsMfp2026
+      - key: DISABLE_SSL_VERIFICATION_GLOBALLY
+        value: "true"
+      - key: FORWARDED_ALLOW_IPS
+        value: "*"
+      - key: ENABLE_STREAMING_PROGRESS
+        value: "false"
+      - key: GUNICORN_WORKERS
+        value: "2"
