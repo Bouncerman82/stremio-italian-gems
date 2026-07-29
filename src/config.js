@@ -72,14 +72,10 @@ export const config = {
   /** Shuffle default se manca extra (secondi). */
   shuffleDefaultSeconds: 300,
   /**
-   * Poster custom (sharp). Su hosting free possono esaurire la RAM:
-   * default OFF se PUBLIC_BASE_URL è https, altrimenti ON in locale.
-   * Forza con CUSTOM_POSTERS=0|1.
+   * Poster custom (sharp): badge paese verde sulla locandina.
+   * Default ON. Disattiva con CUSTOM_POSTERS=0 (es. hosting free in OOM).
    */
-  customPosters:
-    process.env.CUSTOM_POSTERS !== undefined
-      ? process.env.CUSTOM_POSTERS !== '0'
-      : !isProd,
+  customPosters: process.env.CUSTOM_POSTERS !== '0',
 };
 
 export function assertConfig() {
