@@ -1,14 +1,42 @@
 import 'dotenv/config';
 
 const port = Number(process.env.PORT) || 7000;
-const isProd = Boolean(process.env.PUBLIC_BASE_URL?.startsWith('https://'));
+const BEAMUP_FALLBACK =
+  'https://1db6964a221d-stremio-italian-gems.baby-beamup.club';
+
+function isLikelyHosted() {
+  return Boolean(
+    process.env.DYNO ||
+      process.env.DOKKU_APP_TYPE ||
+      process.env.HEROKU ||
+      process.env.RENDER ||
+      process.env.RENDER_EXTERNAL_URL
+  );
+}
+
+/** URL pubblico: env HTTPS, altrimenti host Beamup (mai localhost in hosting). */
+function resolvePublicBaseUrl() {
+  const fromEnv = (process.env.PUBLIC_BASE_URL || process.env.BEAMUP_URL || '')
+    .trim()
+    .replace(/\/$/, '');
+  const hosted = isLikelyHosted();
+
+  if (fromEnv && !(hosted && /localhost|127\.0\.0\.1/i.test(fromEnv))) {
+    return fromEnv;
+  }
+  if (process.env.RENDER_EXTERNAL_URL) {
+    return String(process.env.RENDER_EXTERNAL_URL).replace(/\/$/, '');
+  }
+  if (hosted) return BEAMUP_FALLBACK;
+  return fromEnv || `http://localhost:${port}`;
+}
+
+const publicBaseUrl = resolvePublicBaseUrl();
+const isProd = publicBaseUrl.startsWith('https://');
 
 export const config = {
   port,
-  publicBaseUrl: (process.env.PUBLIC_BASE_URL || `http://localhost:${port}`).replace(
-    /\/$/,
-    ''
-  ),
+  publicBaseUrl,
   tmdbApiKey: process.env.TMDB_API_KEY || '',
   tmdbBaseUrl: 'https://api.themoviedb.org/3',
   tmdbImageBase: 'https://image.tmdb.org/t/p/w500',

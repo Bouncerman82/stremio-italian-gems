@@ -5,9 +5,9 @@
   "type": "module",
   "main": "src/server.js",
   "scripts": {
-    "start": "node --use-system-ca src/server.js",
-    "start:win": "node --use-system-ca src/server.js",
-    "dev": "node --watch --use-system-ca src/server.js"
+    "start": "node src/server.js",
+    "start:win": "node src/server.js",
+    "dev": "node --watch src/server.js"
   },
   "keywords": [
     "stremio",
@@ -19,7 +19,7 @@
   "author": "",
   "license": "MIT",
   "engines": {
-    "node": ">=18"
+    "node": "20.x"
   },
   "dependencies": {
     "@stremio-addon/node-express": "^1.0.0",
