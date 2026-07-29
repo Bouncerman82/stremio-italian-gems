@@ -6,6 +6,45 @@ function escapeHtml(text) {
     .replace(/"/g, '&quot;');
 }
 
+/** Blocco INFO sopra la trama (sostituisce i badge sulle locandine). */
+function renderInfoBox(data) {
+  const rows = [
+    data.rating
+      ? {
+          k: 'Voto',
+          v: `★ ${data.rating}/10${data.voteCount ? ` · ${data.voteCount} voti` : ''}`,
+          gold: true,
+        }
+      : null,
+    (data.genres || []).length
+      ? {
+          k: 'Genere',
+          v: data.genres.map((g) => (typeof g === 'string' ? g : g.name)).join(' · '),
+        }
+      : null,
+    data.year ? { k: 'Anno', v: String(data.year) } : null,
+    data.country ? { k: 'Paese', v: String(data.country) } : null,
+    data.runtime ? { k: 'Durata', v: String(data.runtime) } : null,
+    data.seasonsCount ? { k: 'Stagioni', v: String(data.seasonsCount) } : null,
+    data.language ? { k: 'Lingua', v: String(data.language) } : null,
+  ].filter(Boolean);
+
+  if (!rows.length) return '';
+
+  return `
+    <div class="section">
+      <h2>Informazioni</h2>
+      <div class="info-box">
+        ${rows
+          .map(
+            (r) => `<div class="row"><span class="k">${escapeHtml(r.k)}</span>
+              <span class="v${r.gold ? ' gold' : ''}">${escapeHtml(r.v)}</span></div>`
+          )
+          .join('')}
+      </div>
+    </div>`;
+}
+
 /**
  * CSS pensato per telecomando Android TV / box:
  * focus visibile, target grandi, barra Indietro fissa, no hover-only.
@@ -122,13 +161,27 @@ const baseCss = `
     margin: 0 0 .75rem; font-size: 1rem; text-transform: uppercase;
     letter-spacing: .08em; color: var(--accent);
   }
-  .bio, .role {
+  .bio, .role, .info-box {
     background: rgba(0,0,0,.22);
     border: 1px solid var(--line);
     border-radius: 12px;
     padding: 1rem 1.1rem;
     white-space: pre-wrap;
   }
+  .info-box {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: .65rem 1rem;
+    white-space: normal;
+    margin-bottom: 1rem;
+  }
+  .info-box .row { min-width: 0; }
+  .info-box .k {
+    display: block; font-size: .72rem; color: var(--muted);
+    text-transform: uppercase; letter-spacing: .06em; margin-bottom: .15rem;
+  }
+  .info-box .v { font-weight: 700; font-size: .98rem; color: var(--text); }
+  .info-box .v.gold { color: var(--gold); }
   .role { margin-bottom: 1rem; border-left: 3px solid var(--accent); }
   .side {
     display: flex; gap: 1rem; align-items: center;
@@ -364,6 +417,7 @@ export function renderTramaHtml(data) {
           </div>
         </div>
       </div>
+      ${renderInfoBox(data)}
       <div class="section">
         <h2>Trama</h2>
         <div class="bio">${escapeHtml(data.overview)}</div>
@@ -431,6 +485,8 @@ export function renderSchedaHtml(data) {
           </div>
         </div>
       </div>
+
+      ${renderInfoBox(data)}
 
       <div class="section">
         <h2>Trama</h2>

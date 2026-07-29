@@ -200,17 +200,35 @@ export async function buildDetailedMeta({ type, id }) {
     .join('\n');
 
   const trama = detail.overview || 'Trama non disponibile in italiano.';
+  const runtimeLabel = detail.runtime
+    ? `${detail.runtime} min`
+    : detail.episode_run_time?.[0]
+      ? `${detail.episode_run_time[0]} min/ep`
+      : null;
+  const voteCount = Number(detail.vote_count || 0);
+  const lang = (detail.original_language || '').toUpperCase() || null;
+  const seasonsCount = isSeries
+    ? (detail.number_of_seasons || detail.seasons?.filter((s) => s.season_number > 0).length || null)
+    : null;
+
+  const infoLines = [
+    genres.length ? `Genere  ${genres.join(' · ')}` : null,
+    `Voto    ${rating}/10${voteCount > 0 ? ` (${voteCount} voti)` : ''}`,
+    year ? `Anno    ${year}` : null,
+    `Paese   ${country || 'N/D'}`,
+    runtimeLabel ? `Durata  ${runtimeLabel}` : null,
+    seasonsCount ? `Stagioni  ${seasonsCount}` : null,
+    lang ? `Lingua  ${lang}` : null,
+  ].filter(Boolean);
+
   const description = formatMetaBlocks([
+    { title: 'INFO', lines: infoLines },
     { title: 'TRAMA', body: trama },
     {
       title: 'REGIA',
       body: directors.map((d) => d.name).join(', ') || 'N/D',
     },
     { title: 'CAST', body: castLines || 'N/D' },
-    {
-      title: 'INFO',
-      lines: [`Paese  ${country || 'N/D'}`, `Voto   ${rating}/10`],
-    },
     {
       title: 'SCHEDA COMPLETA',
       lines: [
@@ -322,6 +340,14 @@ export async function buildTramaPageData(mediaType, tmdbId, backHref) {
     mediaType === 'tv'
       ? await getTvDetails(tmdbId)
       : await getMovieDetails(tmdbId);
+  const runtimeLabel = detail.runtime
+    ? `${detail.runtime} min`
+    : detail.episode_run_time?.[0]
+      ? `${detail.episode_run_time[0]} min/ep`
+      : null;
+  const voteCount = Number(detail.vote_count || 0);
+  const lang = (detail.original_language || '').toUpperCase() || null;
+
   return {
     title: detail.title || detail.name,
     year: (detail.release_date || detail.first_air_date || '').slice(0, 4),
@@ -331,8 +357,11 @@ export async function buildTramaPageData(mediaType, tmdbId, backHref) {
       ? `https://image.tmdb.org/t/p/w1280${detail.backdrop_path}`
       : null,
     rating: Number(detail.vote_average || 0).toFixed(1),
+    voteCount,
     genres: (detail.genres || []).map((g) => g.name),
     country: countryBadge(detail),
+    runtime: runtimeLabel,
+    language: lang,
     mediaType,
     backHref: backHref || schedaPageUrl(mediaType, tmdbId),
   };
@@ -390,6 +419,19 @@ export async function buildSchedaPageData(mediaType, tmdbId) {
 
   const type = isTv ? 'series' : 'movie';
 
+  const runtimeLabel = detail.runtime
+    ? `${detail.runtime} min`
+    : detail.episode_run_time?.[0]
+      ? `${detail.episode_run_time[0]} min/ep`
+      : null;
+  const voteCount = Number(detail.vote_count || 0);
+  const lang = (detail.original_language || '').toUpperCase() || null;
+  const seasonsCount = isTv
+    ? (detail.number_of_seasons ||
+        detail.seasons?.filter((s) => s.season_number > 0).length ||
+        null)
+    : null;
+
   return {
     title: detail.title || detail.name,
     year: (detail.release_date || detail.first_air_date || '').slice(0, 4),
@@ -399,7 +441,11 @@ export async function buildSchedaPageData(mediaType, tmdbId) {
       ? `https://image.tmdb.org/t/p/w1280${detail.backdrop_path}`
       : null,
     rating: Number(detail.vote_average || 0).toFixed(1),
+    voteCount,
     country: countryBadge(detail),
+    runtime: runtimeLabel,
+    language: lang,
+    seasonsCount,
     genres: genres.map((g) => ({
       name: g,
       url: genrePageUrl(type, g, schedaSelf),
