@@ -34,24 +34,20 @@ function escapeXml(text) {
     .replace(/"/g, '&quot;');
 }
 
-function buildOverlaySvg({ width, height, rating, country }) {
-  const ratingText = Number(rating || 0).toFixed(1);
+function buildOverlaySvg({ width, height, country }) {
   const countryText = country || 'INT';
 
   const pad = Math.round(width * 0.04);
   const badgeH = Math.round(height * 0.07);
-  const ratingW = Math.round(width * 0.22);
   const countryW = Math.max(
     Math.round(width * 0.16),
     countryText.length * Math.round(badgeH * 0.42)
   );
   const fontSize = Math.round(badgeH * 0.55);
   const radius = Math.round(badgeH * 0.22);
-  const gap = Math.round(width * 0.018);
 
-  const ratingX = width - pad - ratingW;
-  const ratingY = pad;
-  const countryX = ratingX - gap - countryW;
+  // Solo badge paese (in alto a destra); niente voto sulle locandine
+  const countryX = width - pad - countryW;
   const countryY = pad;
 
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -67,18 +63,6 @@ function buildOverlaySvg({ width, height, rating, country }) {
     <text x="${countryX + countryW / 2}" y="${countryY + badgeH / 2 + fontSize * 0.35}"
           text-anchor="middle" font-family="Arial, Helvetica, sans-serif"
           font-size="${fontSize}" font-weight="700" fill="#ffffff">${escapeXml(countryText)}</text>
-  </g>
-  <g filter="url(#shadow)">
-    <rect x="${ratingX}" y="${ratingY}" rx="${radius}" ry="${radius}"
-          width="${ratingW}" height="${badgeH}" fill="#121212"/>
-    <rect x="${ratingX}" y="${ratingY}" rx="${radius}" ry="${radius}"
-          width="${Math.round(ratingW * 0.32)}" height="${badgeH}" fill="#f5c518"/>
-    <text x="${ratingX + Math.round(ratingW * 0.16)}" y="${ratingY + badgeH / 2 + fontSize * 0.35}"
-          text-anchor="middle" font-family="Arial, Helvetica, sans-serif"
-          font-size="${Math.round(fontSize * 0.85)}" font-weight="800" fill="#121212">★</text>
-    <text x="${ratingX + Math.round(ratingW * 0.62)}" y="${ratingY + badgeH / 2 + fontSize * 0.35}"
-          text-anchor="middle" font-family="Arial, Helvetica, sans-serif"
-          font-size="${fontSize}" font-weight="700" fill="#ffffff">${escapeXml(ratingText)}</text>
   </g>
 </svg>`;
 }
@@ -180,11 +164,10 @@ export function posterFallbackUrl(posterPath) {
 }
 
 /** URL immediato per il catalogo (generazione lazy al primo hit di Stremio). */
-export function customPosterPublicUrl({ tmdbId, posterPath, rating, country }) {
+export function customPosterPublicUrl({ tmdbId, posterPath, country }) {
   if (!config.customPosters || !posterPath || !tmdbId) return null;
   const qs = new URLSearchParams({
     p: posterPath,
-    r: Number(rating || 0).toFixed(1),
     c: country || 'INT',
   });
   return `${config.publicBaseUrl}/badge-poster/${tmdbId}.jpg?${qs.toString()}`;
@@ -194,26 +177,24 @@ export function customPosterUrlForItem(item) {
   return customPosterPublicUrl({
     tmdbId: item.id,
     posterPath: item.poster_path,
-    rating: item.vote_average,
     country: countryBadge(item),
   });
 }
 
-function cachePath(tmdbId, rating, country) {
-  const ratingKey = Number(rating || 0).toFixed(1);
-  const filename = `${tmdbId}_${ratingKey}_${safeKey(country)}_r.jpg`;
+function cachePath(tmdbId, country) {
+  // suffisso _c = solo paese (invalida cache vecchia con voto)
+  const filename = `${tmdbId}_${safeKey(country)}_c.jpg`;
   return path.join(postersDir, filename);
 }
 
 export async function renderCustomPoster({
   tmdbId,
   posterPath,
-  rating,
   country = 'INT',
 }) {
   if (!posterPath || !tmdbId) return null;
 
-  const outPath = cachePath(tmdbId, rating, country);
+  const outPath = cachePath(tmdbId, country);
   const publicUrl = `${config.publicBaseUrl}/posters/${path.basename(outPath)}`;
 
   if (fs.existsSync(outPath)) return publicUrl;
@@ -226,9 +207,7 @@ export async function renderCustomPoster({
     const width = meta.width || 500;
     const height = meta.height || 750;
 
-    const overlay = Buffer.from(
-      buildOverlaySvg({ width, height, rating, country })
-    );
+    const overlay = Buffer.from(buildOverlaySvg({ width, height, country }));
 
     await image
       .composite([{ input: overlay, top: 0, left: 0 }])
@@ -246,7 +225,6 @@ export async function renderCustomPoster({
 export async function handleBadgePoster(req, res) {
   const tmdbId = String(req.params.tmdbId || '').replace(/\.jpg$/i, '');
   const posterPath = String(req.query.p || '');
-  const rating = String(req.query.r || '0');
   const country = String(req.query.c || 'INT');
 
   if (!tmdbId || !posterPath.startsWith('/')) {
@@ -254,7 +232,7 @@ export async function handleBadgePoster(req, res) {
     return;
   }
 
-  const outPath = cachePath(tmdbId, rating, country);
+  const outPath = cachePath(tmdbId, country);
   if (fs.existsSync(outPath)) {
     res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
     res.type('jpg').sendFile(outPath);
@@ -264,7 +242,6 @@ export async function handleBadgePoster(req, res) {
   const url = await renderCustomPoster({
     tmdbId,
     posterPath,
-    rating,
     country,
   });
 
