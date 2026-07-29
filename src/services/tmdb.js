@@ -83,7 +83,9 @@ export async function tmdbFetch(pathname, params = {}) {
   let lastErr;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      const res = await fetch(url);
+      const res = await fetch(url, {
+        signal: AbortSignal.timeout(config.upstreamTimeoutMs),
+      });
       if (!res.ok) {
         const body = await res.text().catch(() => '');
         // retry su rate limit / errori temporanei
@@ -276,7 +278,7 @@ function densifyItalianLikely(ranked, limit) {
 /** Seed leggeri da JustWatch IT → oggetti stile Discover TMDB. */
 async function fetchJustWatchSeedItems(mediaType, existingIds, limit) {
   if (!config.justWatchBoost || limit <= 0) return [];
-  await ensureJustWatchItIndex();
+  warmJustWatchIndex();
   const ids = getJustWatchSeedTmdbIds(mediaType, limit).filter(
     (id) => !existingIds.has(Number(id)) && !existingIds.has(String(id))
   );
@@ -348,6 +350,11 @@ export const TMDB_DISCOVER_MAX_RESULTS =
 
 const pageCache = new Map();
 const probeCache = new Map();
+
+function warmJustWatchIndex() {
+  // JustWatch migliora il ranking, ma non è necessario per costruire il catalogo.
+  void ensureJustWatchItIndex().catch(() => null);
+}
 
 /**
  * Parametri Discover condivisi (film/serie).
@@ -517,8 +524,8 @@ export async function discoverPopularRecent(mediaType, genreIds = [], originCoun
       pages.map((page) => discoverPage(discover, page).then((r) => ({ results: r })))
     );
 
-  // Preload JW IT (best-effort; non blocca se fallisce)
-  await ensureJustWatchItIndex().catch(() => null);
+  // Preload JW IT senza trattenere il catalogo.
+  warmJustWatchIndex();
 
   const baseOpts = {
     mediaType,
@@ -708,7 +715,7 @@ export async function discoverTop100(mediaType, genreIds = [], originCountry = n
 
   // Paese esplicito → una sola passata + rank doppiaggio
   if (originCountry) {
-    await ensureJustWatchItIndex().catch(() => null);
+    warmJustWatchIndex();
     const pages = await Promise.all(jobsFor());
     let merged = markJustWatchIt(filterCandidates(pages));
     const seed = await fetchJustWatchSeedItems(
@@ -721,7 +728,7 @@ export async function discoverTop100(mediaType, genreIds = [], originCountry = n
     return densifyItalianLikely(rankItalianHybrid(picked), 100);
   }
 
-  await ensureJustWatchItIndex().catch(() => null);
+  warmJustWatchIndex();
 
   // Niente with_original_language=it: vogliamo stranieri doppiati, non cinema IT
   const jobs = [

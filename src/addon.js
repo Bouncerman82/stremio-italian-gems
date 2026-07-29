@@ -8,13 +8,28 @@ import {
 } from './services/metaDetail.js';
 import { buildCountMetaFallback } from './lib/copy.js';
 
+function withTimeout(promise, timeoutMs, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`${label} timed out after ${timeoutMs}ms`)),
+      timeoutMs
+    );
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 export function buildAddon() {
   const builder = new AddonBuilder(manifest);
 
   builder.defineCatalogHandler(async ({ type, id, extra }) => {
     console.log(`[catalog] type=${type} id=${id} extra=`, extra);
     try {
-      const result = await buildCatalog({ type, id, extra: extra || {} });
+      const result = await withTimeout(
+        buildCatalog({ type, id, extra: extra || {} }),
+        config.catalogTimeoutMs,
+        `catalog ${type}/${id}`
+      );
       return {
         metas: result.metas || [],
         cacheMaxAge: result.cacheMaxAge ?? 30,

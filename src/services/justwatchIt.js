@@ -75,6 +75,7 @@ function sleep(ms) {
 async function jwGraphql(variables) {
   const res = await fetch(JW_GQL, {
     method: 'POST',
+    signal: AbortSignal.timeout(config.upstreamTimeoutMs),
     headers: {
       'content-type': 'application/json',
       Accept: 'application/json',

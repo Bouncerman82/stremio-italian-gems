@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.3.1 — 2026-07-29
+
+### Risposta rapida in caso di provider bloccato
+- Timeout di 3,5 s per ogni chiamata TMDB e JustWatch.
+- Budget massimo di 6,5 s per l'endpoint catalogo: in errore restituisce una lista vuota, senza lasciare Stremio in caricamento.
+- L'indice JustWatch ora si aggiorna in background: il primo catalogo non aspetta più il suo warm-up.
+
 ## 3.2.1 — 2026-07-26
 
 ### Velocità catalogo (non era RAM)

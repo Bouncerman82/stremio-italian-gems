@@ -23,6 +23,10 @@ services:
         value: "3"
       - key: TMDB_CONCURRENCY
         value: "4"
+      - key: UPSTREAM_TIMEOUT_MS
+        value: "3500"
+      - key: CATALOG_TIMEOUT_MS
+        value: "6500"
       - key: NODE_OPTIONS
         value: "--use-system-ca"
       - key: DATA_CACHE_SECONDS

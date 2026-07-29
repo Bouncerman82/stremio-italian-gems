@@ -52,7 +52,10 @@ Stremio fuori dalla LAN richiede **HTTPS**.
 | `PUBLIC_BASE_URL` | `https://tuo-servizio.onrender.com` (senza `/` finale) |
 | `CUSTOM_POSTERS` | `0` consigliato sui piani free (risparmia RAM) |
 
-Opzionali: `TMDB_CONCURRENCY=4`, `DATA_CACHE_SECONDS=21600`, `PORT` (impostato dal host).
+Opzionali: `TMDB_CONCURRENCY=4`, `DATA_CACHE_SECONDS=21600`,
+`UPSTREAM_TIMEOUT_MS=3500`, `CATALOG_TIMEOUT_MS=6500`, `PORT` (impostato dal host).
+Il catalogo risponde comunque con una lista vuota se un provider supera il budget,
+così Stremio non rimane in caricamento.
 
 ### Render (consigliato, file `render.yaml` incluso)
 

@@ -44,6 +44,11 @@ const YEARS_PER_PAGE = Number(process.env.YEARS_PER_PAGE || 3);
 /** Pagine TMDB per anno (20 titoli/pagina). */
 const PAGES_PER_YEAR = Number(process.env.PAGES_PER_YEAR || 2);
 
+function warmJustWatchIndex() {
+  // Il boost è opzionale: al primo avvio non deve trattenere la risposta catalogo.
+  void ensureJustWatchItIndex().catch(() => null);
+}
+
 async function mapPool(items, concurrency, fn) {
   const out = new Array(items.length);
   let cursor = 0;
@@ -282,7 +287,7 @@ async function appendItalianOversample(
   baseItems,
   { mediaType, genreIds, year, yearRange, originCountry, seed, pageBucket }
 ) {
-  await ensureJustWatchItIndex().catch(() => null);
+  warmJustWatchIndex();
 
   const density = Number(config.itDubDensity ?? 0.55);
   const regionPages = Math.max(1, Math.round(1 + density)); // 1–2
@@ -525,8 +530,8 @@ export async function buildCatalog({ type, id, extra = {} }) {
     return { metas: [], totalItems: 0, skip: 0 };
   }
 
-  // Indice JustWatch IT (best-effort) per boost doppiaggio sul soft-rank
-  await ensureJustWatchItIndex().catch(() => null);
+  // Indice JustWatch IT: warm-up non bloccante, il catalogo resta disponibile.
+  warmJustWatchIndex();
 
   // Genere TV (prefissi) + extras desktop: gli extra espliciti vincono
   const genreSel = parseGenreSelection(extra.genre, stremioType);

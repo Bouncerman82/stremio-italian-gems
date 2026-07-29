@@ -34,6 +34,12 @@ function resolvePublicBaseUrl() {
 const publicBaseUrl = resolvePublicBaseUrl();
 const isProd = publicBaseUrl.startsWith('https://');
 
+function boundedPositiveInt(value, fallback, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, Math.floor(parsed)));
+}
+
 export const config = {
   port,
   publicBaseUrl,
@@ -60,6 +66,21 @@ export const config = {
    */
   tmdbConcurrency: Number(
     process.env.TMDB_CONCURRENCY || (isProd ? 4 : 8)
+  ),
+  /**
+   * Ogni chiamata verso un provider esterno deve finire prima del budget
+   * complessivo del catalogo: l'addon non può lasciare Stremio in loading.
+   */
+  upstreamTimeoutMs: boundedPositiveInt(
+    process.env.UPSTREAM_TIMEOUT_MS,
+    3_500,
+    { min: 500, max: 15_000 }
+  ),
+  /** Budget end-to-end per una risposta catalogo Stremio. */
+  catalogTimeoutMs: boundedPositiveInt(
+    process.env.CATALOG_TIMEOUT_MS,
+    6_500,
+    { min: 1_000, max: 20_000 }
   ),
   /** Cache dati discover (secondi). Default 6 ore. */
   dataCacheSeconds: Number(process.env.DATA_CACHE_SECONDS ?? 6 * 3600),
