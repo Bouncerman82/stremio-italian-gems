@@ -4,6 +4,7 @@ node_modules/
 mediaflow/.env
 mediaflow/cloudflared.exe
 data/imdb-cache.json
+data/justwatch-it.json
 cache/
 public/posters/
 *.log

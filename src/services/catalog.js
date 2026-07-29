@@ -26,8 +26,13 @@ import {
   discoverTop100,
   discoverProbe,
   rankItalianHybrid,
+  markRegionIt,
+  markWatchIt,
+  attachJustWatchFlags,
+  IT_FLATRATE_PROVIDERS,
   TMDB_DISCOVER_PAGE_SIZE,
 } from './tmdb.js';
+import { ensureJustWatchItIndex } from './justwatchIt.js';
 
 const PAGE_SIZE = Number(process.env.CATALOG_PAGE_SIZE || 30);
 const COUNT_TILE_SLOTS = 1;
@@ -270,6 +275,96 @@ async function probeYearDiscover(mediaType, genreIds, originCountry, year) {
 }
 
 /**
+ * Oversample titoli *stranieri* con alta probabilità di doppiaggio IT
+ * (region / VOD IT / generi tipicamente doppiati / JustWatch IT).
+ */
+async function appendItalianOversample(
+  baseItems,
+  { mediaType, genreIds, year, yearRange, originCountry, seed, pageBucket }
+) {
+  await ensureJustWatchItIndex().catch(() => null);
+
+  const density = Number(config.itDubDensity ?? 0.55);
+  const regionPages = Math.max(1, Math.round(1 + density)); // 1–2
+  const watchPages = config.itWatchOversample ? Math.max(1, Math.round(density)) : 0;
+
+  const jobs = [];
+
+  for (let p = 1; p <= regionPages; p++) {
+    jobs.push(
+      discoverPage(
+        buildDiscoverParams({
+          mediaType,
+          genreIds,
+          year,
+          yearRange,
+          originCountry,
+          region: 'IT',
+          watchRegion: 'IT',
+        }),
+        seededMapIndex(pageBucket * 3 + p, 5, `${seed}:itreg`) + 1
+      )
+        .then((rows) => markRegionIt(rows || []))
+        .catch(() => [])
+    );
+  }
+
+  for (let p = 1; p <= watchPages; p++) {
+    jobs.push(
+      discoverPage(
+        buildDiscoverParams({
+          mediaType,
+          genreIds,
+          year,
+          yearRange,
+          originCountry,
+          watchRegion: 'IT',
+          watchProviders: IT_FLATRATE_PROVIDERS,
+          watchMonetizationTypes: 'flatrate',
+        }),
+        seededMapIndex(pageBucket * 2 + p, 4, `${seed}:itwatch`) + 1
+      )
+        .then((rows) => markWatchIt(rows || []))
+        .catch(() => [])
+    );
+  }
+
+  // Animazione / famiglia / action: quasi sempre doppiati in IT
+  if (density >= 0.4 && !(genreIds && genreIds.length)) {
+    jobs.push(
+      discoverPage(
+        buildDiscoverParams({
+          mediaType,
+          genreIds: mediaType === 'tv' ? [16, 10762, 10759] : [16, 10751, 28, 12],
+          year,
+          yearRange,
+          originCountry,
+          region: 'IT',
+          watchRegion: 'IT',
+        }),
+        seededMapIndex(pageBucket, 3, `${seed}:itgenre`) + 1
+      )
+        .then((rows) => markRegionIt(rows || []))
+        .catch(() => [])
+    );
+  }
+
+  const pages = await Promise.all(jobs);
+  const seen = new Set((baseItems || []).map((i) => i.id));
+  let out = [...(baseItems || [])];
+  for (const rows of pages) {
+    for (const row of rows || []) {
+      if (!row?.id || seen.has(row.id)) continue;
+      const lang = String(row.original_language || '').toLowerCase();
+      if (lang === 'it') continue;
+      seen.add(row.id);
+      out.push(row);
+    }
+  }
+  return attachJustWatchFlags(out);
+}
+
+/**
  * Shuffle su tutto il catalogo TMDB, ma con poche richieste HTTP.
  * Strategia: per ogni pagina Stremio si scelgono pochi anni (seed),
  * da ciascuno 1–2 pagine Discover intere → varietà sul DB senza
@@ -329,28 +424,16 @@ async function loadFullDbShuffleWindow({
       ? `y${year}:b${pageBucket}`
       : `yr${yearRange?.gte || 'x'}-${yearRange?.lte || 'x'}:b${pageBucket}`;
     let items = await fillFromPack(pack, salt, Math.ceil(limit * 1.35));
-    // Densità IT opzionale: una pagina extra con lingua originale IT
-    try {
-      const itDiscover = buildDiscoverParams({
-        mediaType,
-        genreIds,
-        year: year || undefined,
-        yearRange: year ? null : yearRange,
-        originCountry,
-        originalLanguage: 'it',
-      });
-      const itPage = await discoverPage(itDiscover, 1);
-      if (itPage?.length) {
-        const seen = new Set(items.map((i) => i.id));
-        for (const row of itPage) {
-          if (!row?.id || seen.has(row.id)) continue;
-          seen.add(row.id);
-          items.push(row);
-        }
-      }
-    } catch {
-      // ignore
-    }
+    // Densità IT: lingua originale + region + watch providers IT
+    items = await appendItalianOversample(items, {
+      mediaType,
+      genreIds,
+      year: year || undefined,
+      yearRange: year ? null : yearRange,
+      originCountry,
+      seed: `${seed}:${salt}`,
+      pageBucket: 0,
+    });
     items = rankItalianHybrid(orderBySeed(items, `${seed}:${salt}:it`), {
       soft: true,
     }).slice(0, Math.ceil(limit * 1.35));
@@ -387,20 +470,20 @@ async function loadFullDbShuffleWindow({
     fillFromPack(pack, `y${y}:b${pageBucket}`, perYear)
   );
 
-  // Frazione IT: una pagina lingua originale it su un anno campionato
+  // Frazione IT: lingua originale + region + watch flatrate IT
   try {
     const itYear =
       pickedYears[seededMapIndex(pageBucket, pickedYears.length, `${seed}:ity`)] ||
       pickedYears[0];
-    const itDiscover = buildDiscoverParams({
+    const oversampled = await appendItalianOversample([], {
       mediaType,
       genreIds,
       year: itYear,
       originCountry,
-      originalLanguage: 'it',
+      seed,
+      pageBucket,
     });
-    const itPage = await discoverPage(itDiscover, 1);
-    if (itPage?.length) chunks.push(itPage);
+    if (oversampled.length) chunks.push(oversampled);
   } catch {
     // ignore
   }
@@ -441,6 +524,9 @@ export async function buildCatalog({ type, id, extra = {} }) {
   ) {
     return { metas: [], totalItems: 0, skip: 0 };
   }
+
+  // Indice JustWatch IT (best-effort) per boost doppiaggio sul soft-rank
+  await ensureJustWatchItIndex().catch(() => null);
 
   // Genere TV (prefissi) + extras desktop: gli extra espliciti vincono
   const genreSel = parseGenreSelection(extra.genre, stremioType);

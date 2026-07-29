@@ -2,6 +2,33 @@ import { config } from '../config.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  italianDubScore,
+  italianHybridTier,
+  rankItalianHybrid,
+  markRegionIt,
+  markWatchIt,
+  attachJustWatchFlags,
+  mergeDedupePreferHigherScores,
+  isItalianOriginal,
+  IT_FLATRATE_PROVIDERS,
+} from './italianDubScore.js';
+import {
+  ensureJustWatchItIndex,
+  getJustWatchSeedTmdbIds,
+  markJustWatchIt,
+} from './justwatchIt.js';
+
+export {
+  italianDubScore,
+  italianHybridTier,
+  rankItalianHybrid,
+  markRegionIt,
+  markWatchIt,
+  attachJustWatchFlags,
+  isItalianOriginal,
+  IT_FLATRATE_PROVIDERS,
+};
 
 const imdbCache = new Map();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -179,66 +206,125 @@ export function prioritizeItalianLanguage(items) {
 }
 
 /**
- * Tier IT ibrido (probabilità audio IT, non certezza doppiaggio):
- *   A — original_language=it oppure origin_country/production IT
- *   B — proveniente da Discover region=IT (visibilità IT)
- *   C — resto del pool (fill generoso)
+ * Garantisce una quota di titoli *stranieri* con alta probabilità di doppiaggio IT
+ * in testa. Cinema italiano cappato. Applica flag JustWatch se indice pronto.
  */
-export function italianHybridTier(item) {
-  if (!item) return 2;
-  const lang = String(item.original_language || '').toLowerCase();
-  if (lang === 'it') return 0;
-  const origins = item.origin_country || [];
-  if (Array.isArray(origins) && origins.some((c) => String(c).toUpperCase() === 'IT')) {
-    return 0;
-  }
-  const prod = item.production_countries || [];
-  if (
-    Array.isArray(prod) &&
-    prod.some((c) => String(c?.iso_3166_1 || c).toUpperCase() === 'IT')
-  ) {
-    return 0;
-  }
-  if (item._regionIt || item._itTier === 'B') return 1;
-  return 2;
-}
+function densifyItalianLikely(ranked, limit) {
+  const withJw = attachJustWatchFlags(ranked);
+  const target = Math.max(
+    1,
+    Math.floor(limit * Number(config.itDubDensity ?? 0.55))
+  );
+  const maxOriginals = Math.max(
+    0,
+    Math.floor(limit * Number(config.itOriginalDensifyCap ?? 0.12))
+  );
 
-/**
- * Ranking ibrido generoso: A → B → C, senza hard-exclude.
- * soft=true: solo riordina per tier (ordine relativo entro il tier resta), per full-db shuffle.
- */
-export function rankItalianHybrid(items, { soft = false } = {}) {
-  if (soft) {
-    const buckets = [[], [], []];
-    for (const item of items) {
-      buckets[italianHybridTier(item)].push(item);
+  const dubbedLikely = [];
+  const originals = [];
+  const rest = [];
+
+  for (const item of withJw) {
+    if (isItalianOriginal(item)) {
+      originals.push(item);
+      continue;
     }
-    return [...buckets[0], ...buckets[1], ...buckets[2]];
+    if (italianDubScore(item) >= 40) dubbedLikely.push(item);
+    else rest.push(item);
   }
-  return [...items].sort((a, b) => {
-    const ta = italianHybridTier(a);
-    const tb = italianHybridTier(b);
-    if (ta !== tb) return ta - tb;
-    return Number(b.vote_average || 0) - Number(a.vote_average || 0);
-  });
-}
 
-function markRegionIt(items) {
-  return (items || []).map((it) => ({ ...it, _regionIt: true, _itTier: 'B' }));
-}
+  const out = [];
+  const seen = new Set();
+  const push = (item) => {
+    if (!item?.id || seen.has(item.id) || out.length >= limit) return false;
+    seen.add(item.id);
+    out.push(item);
+    return true;
+  };
 
-function mergeDedupePreferHigherTier(...lists) {
-  const best = new Map();
-  for (const list of lists) {
-    for (const item of list || []) {
-      if (!item?.id) continue;
-      const prev = best.get(item.id);
-      if (!prev || italianHybridTier(item) < italianHybridTier(prev)) {
-        best.set(item.id, item);
+  for (const item of dubbedLikely) {
+    if (out.length >= target) break;
+    push(item);
+  }
+
+  let nOrig = 0;
+  for (const item of originals) {
+    if (out.length >= target || nOrig >= maxOriginals) break;
+    if (push(item)) nOrig++;
+  }
+
+  for (const item of withJw) {
+    if (out.length >= limit) break;
+    if (isItalianOriginal(item) && nOrig >= maxOriginals) continue;
+    if (isItalianOriginal(item) && push(item)) nOrig++;
+    else if (!isItalianOriginal(item)) push(item);
+  }
+  for (const list of [dubbedLikely, rest, originals]) {
+    for (const item of list) {
+      if (out.length >= limit) break;
+      if (isItalianOriginal(item) && nOrig >= maxOriginals) continue;
+      if (isItalianOriginal(item)) {
+        if (push(item)) nOrig++;
+      } else {
+        push(item);
       }
     }
   }
-  return [...best.values()];
+  return out.slice(0, limit);
+}
+
+/** Seed leggeri da JustWatch IT → oggetti stile Discover TMDB. */
+async function fetchJustWatchSeedItems(mediaType, existingIds, limit) {
+  if (!config.justWatchBoost || limit <= 0) return [];
+  await ensureJustWatchItIndex();
+  const ids = getJustWatchSeedTmdbIds(mediaType, limit).filter(
+    (id) => !existingIds.has(Number(id)) && !existingIds.has(String(id))
+  );
+  if (!ids.length) return [];
+
+  const pathBase = mediaType === 'tv' ? '/tv' : '/movie';
+  const concurrency = Math.min(config.tmdbConcurrency || 4, 4);
+  const out = [];
+  for (let i = 0; i < ids.length; i += concurrency) {
+    const chunk = ids.slice(i, i + concurrency);
+    const rows = await Promise.all(
+      chunk.map(async (id) => {
+        try {
+          const data = await tmdbFetch(`${pathBase}/${id}`);
+          if (!data?.id) return null;
+          // Skip cinema italiano nel seed doppiaggio
+          if (String(data.original_language || '').toLowerCase() === 'it') {
+            return null;
+          }
+          return {
+            id: data.id,
+            title: data.title || data.name,
+            name: data.name || data.title,
+            original_title: data.original_title || data.original_name,
+            original_name: data.original_name || data.original_title,
+            original_language: data.original_language,
+            overview: data.overview,
+            poster_path: data.poster_path,
+            backdrop_path: data.backdrop_path,
+            genre_ids: (data.genres || []).map((g) => g.id),
+            popularity: data.popularity,
+            vote_average: data.vote_average,
+            vote_count: data.vote_count,
+            release_date: data.release_date,
+            first_air_date: data.first_air_date,
+            origin_country: data.origin_country,
+            adult: data.adult,
+          };
+        } catch {
+          return null;
+        }
+      })
+    );
+    for (const row of rows) {
+      if (row) out.push(row);
+    }
+  }
+  return markJustWatchIt(out);
 }
 
 function dedupeById(pages) {
@@ -278,6 +364,8 @@ export function buildDiscoverParams({
   originalLanguage = null,
   region = null,
   watchRegion = null,
+  watchProviders = null,
+  watchMonetizationTypes = null,
 } = {}) {
   const isMovie = mediaType === 'movie';
   const path = isMovie ? '/discover/movie' : '/discover/tv';
@@ -290,6 +378,8 @@ export function buildDiscoverParams({
     with_original_language: originalLanguage || undefined,
     region: region || undefined,
     watch_region: watchRegion || undefined,
+    with_watch_providers: watchProviders || undefined,
+    with_watch_monetization_types: watchMonetizationTypes || undefined,
   };
 
   if (popularRecent) {
@@ -417,14 +507,18 @@ export async function discoverSeries(options = {}) {
 
 /**
  * Ultime 100 uscite popolari negli ultimi 2 mesi.
- * Dual-query ibrido generoso: lingua IT + region IT, fill globale se serve.
+ * Focus doppiaggio: region IT + watch providers IT + JustWatch IT + fill.
  */
 export async function discoverPopularRecent(mediaType, genreIds = [], originCountry = null) {
-  const pages = [1, 2, 3, 4, 5];
-  const fetchPages = (discover) =>
+  const regionPages = [1, 2, 3, 4, 5];
+  const fillPages = [1, 2, 3, 4, 5];
+  const fetchPages = (discover, pages) =>
     Promise.all(
       pages.map((page) => discoverPage(discover, page).then((r) => ({ results: r })))
     );
+
+  // Preload JW IT (best-effort; non blocca se fallisce)
+  await ensureJustWatchItIndex().catch(() => null);
 
   const baseOpts = {
     mediaType,
@@ -433,37 +527,93 @@ export async function discoverPopularRecent(mediaType, genreIds = [], originCoun
     originCountry,
   };
 
-  // Se l'utente ha già scelto un paese, una sola query (con boost IT)
   if (originCountry) {
     const discover = buildDiscoverParams(baseOpts);
-    const results = await fetchPages(discover);
-    return rankItalianHybrid(dedupeById(results)).slice(0, 100);
+    const results = await fetchPages(discover, regionPages);
+    let merged = markJustWatchIt(dedupeById(results));
+    const seed = await fetchJustWatchSeedItems(
+      mediaType,
+      new Set(merged.map((i) => i.id)),
+      config.justWatchSeedLimit
+    );
+    if (seed.length) {
+      merged = mergeDedupePreferHigherScores(seed, merged);
+    }
+    return densifyItalianLikely(rankItalianHybrid(merged), 100);
   }
 
-  const [langPages, regionPages, fillPages] = await Promise.all([
-    fetchPages(
-      buildDiscoverParams({ ...baseOpts, originalLanguage: 'it' })
-    ),
+  const jobs = [
     fetchPages(
       buildDiscoverParams({
         ...baseOpts,
         region: 'IT',
         watchRegion: 'IT',
-      })
+      }),
+      regionPages
     ),
-    fetchPages(buildDiscoverParams(baseOpts)),
-  ]);
+    fetchPages(buildDiscoverParams(baseOpts), fillPages),
+  ];
 
-  const tierA = dedupeById(langPages);
-  const tierB = markRegionIt(dedupeById(regionPages));
-  const tierC = dedupeById(fillPages);
-  const merged = mergeDedupePreferHigherTier(tierA, tierB, tierC);
-  return rankItalianHybrid(merged).slice(0, 100);
+  if (config.itWatchOversample) {
+    jobs.push(
+      fetchPages(
+        buildDiscoverParams({
+          ...baseOpts,
+          watchRegion: 'IT',
+          watchProviders: IT_FLATRATE_PROVIDERS,
+          watchMonetizationTypes: 'flatrate',
+        }),
+        regionPages
+      )
+    );
+  }
+
+  if (!(genreIds && genreIds.length)) {
+    jobs.push(
+      fetchPages(
+        buildDiscoverParams({
+          ...baseOpts,
+          genreIds: mediaType === 'tv' ? [16, 10762, 10759] : [16, 10751, 28, 12],
+          region: 'IT',
+          watchRegion: 'IT',
+        }),
+        [1, 2, 3]
+      )
+    );
+  }
+
+  const settled = await Promise.all(jobs);
+  const tierRegion = markRegionIt(dedupeById(settled[0]));
+  const tierFill = dedupeById(settled[1]);
+  let cursor = 2;
+  const tierWatch = config.itWatchOversample
+    ? markWatchIt(dedupeById(settled[cursor++]))
+    : [];
+  const tierGenre =
+    settled[cursor] != null
+      ? markRegionIt(dedupeById(settled[cursor]))
+      : [];
+  let merged = mergeDedupePreferHigherScores(
+    tierRegion,
+    tierWatch,
+    tierGenre,
+    tierFill
+  );
+  merged = markJustWatchIt(merged);
+  const seed = await fetchJustWatchSeedItems(
+    mediaType,
+    new Set(merged.map((i) => i.id)),
+    config.justWatchSeedLimit
+  );
+  if (seed.length) {
+    merged = mergeDedupePreferHigherScores(seed, merged);
+  }
+  return densifyItalianLikely(rankItalianHybrid(merged), 100);
 }
 
 /**
  * Top 100: voto ≥ 6,5, max 30 anni, preferenza ultimi 5, generi misti.
- * Dual-query IT (lingua + region) + fill generoso; lista giornaliera.
+ * Focus doppiaggio: region IT + watch IT + fill (niente lingua originale IT).
  */
 export async function discoverTop100(mediaType, genreIds = [], originCountry = null) {
   const isMovie = mediaType !== 'tv';
@@ -556,25 +706,56 @@ export async function discoverTop100(mediaType, genreIds = [], originCountry = n
       return Number(item.vote_average || 0) >= minVote;
     });
 
-  // Paese esplicito → una sola passata + rank IT
+  // Paese esplicito → una sola passata + rank doppiaggio
   if (originCountry) {
+    await ensureJustWatchItIndex().catch(() => null);
     const pages = await Promise.all(jobsFor());
-    const picked = pickDiverseTop100(filterCandidates(pages), daySeed);
-    return rankItalianHybrid(picked).slice(0, 100);
+    let merged = markJustWatchIt(filterCandidates(pages));
+    const seed = await fetchJustWatchSeedItems(
+      mediaType,
+      new Set(merged.map((i) => i.id)),
+      Math.min(config.justWatchSeedLimit, 25)
+    );
+    if (seed.length) merged = mergeDedupePreferHigherScores(seed, merged);
+    const picked = pickDiverseTop100(merged, daySeed);
+    return densifyItalianLikely(rankItalianHybrid(picked), 100);
   }
 
-  const [langPages, regionPages, fillPages] = await Promise.all([
-    Promise.all(jobsFor({ with_original_language: 'it' })),
+  await ensureJustWatchItIndex().catch(() => null);
+
+  // Niente with_original_language=it: vogliamo stranieri doppiati, non cinema IT
+  const jobs = [
     Promise.all(jobsFor({ region: 'IT', watch_region: 'IT' })),
     Promise.all(jobsFor()),
-  ]);
+  ];
+  if (config.itWatchOversample) {
+    jobs.push(
+      Promise.all(
+        jobsFor({
+          watch_region: 'IT',
+          with_watch_providers: IT_FLATRATE_PROVIDERS,
+          with_watch_monetization_types: 'flatrate',
+        })
+      )
+    );
+  }
 
-  const tierA = filterCandidates(langPages);
-  const tierB = markRegionIt(filterCandidates(regionPages));
-  const tierC = filterCandidates(fillPages);
-  const merged = mergeDedupePreferHigherTier(tierA, tierB, tierC);
+  const settled = await Promise.all(jobs);
+  const tierRegion = markRegionIt(filterCandidates(settled[0]));
+  const tierFill = filterCandidates(settled[1]);
+  const tierWatch = settled[2]
+    ? markWatchIt(filterCandidates(settled[2]))
+    : [];
+  let merged = mergeDedupePreferHigherScores(tierRegion, tierWatch, tierFill);
+  merged = markJustWatchIt(merged);
+  const seed = await fetchJustWatchSeedItems(
+    mediaType,
+    new Set(merged.map((i) => i.id)),
+    Math.min(config.justWatchSeedLimit, 25)
+  );
+  if (seed.length) merged = mergeDedupePreferHigherScores(seed, merged);
   const picked = pickDiverseTop100(merged, daySeed);
-  return rankItalianHybrid(picked).slice(0, 100);
+  return densifyItalianLikely(rankItalianHybrid(picked), 100);
 }
 
 export async function getImdbId(tmdbId, mediaType = 'movie') {

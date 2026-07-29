@@ -76,6 +76,45 @@ export const config = {
    * Default ON. Disattiva con CUSTOM_POSTERS=0 (es. hosting free in OOM).
    */
   customPosters: process.env.CUSTOM_POSTERS !== '0',
+  /**
+   * Boost probabilità *doppiaggio italiano* (titoli stranieri) nei cataloghi.
+   * 0=off, 1=on. Non privilegia il cinema italiano.
+   */
+  itDubBoost: process.env.IT_DUB_BOOST !== '0',
+  /**
+   * Intensità dei segnali di doppiaggio (region/watch/genere/popolarità).
+   * 1 = default; 1.3 = più aggressivo; 0.7 = più soft.
+   */
+  itDubBoostStrength: Number(process.env.IT_DUB_BOOST_STRENGTH || 1),
+  /**
+   * Quota target di titoli “likely dubbed IT” in testa alle liste (0–1).
+   */
+  itDubDensity: Number(process.env.IT_DUB_DENSITY || 0.55),
+  /**
+   * Cap cinema italiano (originale) nella densify di testa (0–1). Default 12%.
+   */
+  itOriginalDensifyCap: Number(process.env.IT_ORIGINAL_DENSIFY_CAP || 0.12),
+  /**
+   * Oversample da watch providers flatrate IT (Netflix/Prime/Disney+/…).
+   * Correlato a tracce IT doppiate sulle piattaforme; 0 per disattivare.
+   */
+  itWatchOversample: process.env.IT_WATCH_OVERSAMPLE !== '0',
+  /**
+   * Boost da JustWatch Italia (popular/trending GraphQL).
+   * Titoli in evidenza su justwatch.com/it → più probabilità di doppiaggio.
+   * 0 per disattivare (TMDB ranking resta invariato).
+   */
+  justWatchBoost: process.env.JUSTWATCH_IT_BOOST !== '0',
+  /** TTL cache JW IT (secondi). Default 24h. */
+  justWatchCacheSeconds: Number(
+    process.env.JUSTWATCH_IT_CACHE_SECONDS || 24 * 60 * 60
+  ),
+  /** Titoli per pagina GraphQL (20–100). */
+  justWatchPageSize: Number(process.env.JUSTWATCH_IT_PAGE_SIZE || 50),
+  /** Pagine per lista popular/trending (1–4). */
+  justWatchMaxPages: Number(process.env.JUSTWATCH_IT_MAX_PAGES || 2),
+  /** Quanti TMDB id JW seedare nel pool catalogo (0=solo boost match). */
+  justWatchSeedLimit: Number(process.env.JUSTWATCH_IT_SEED_LIMIT || 35),
 };
 
 export function assertConfig() {

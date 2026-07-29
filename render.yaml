@@ -27,5 +27,15 @@ services:
         value: "--use-system-ca"
       - key: DATA_CACHE_SECONDS
         value: "21600"
+      - key: IT_DUB_BOOST
+        value: "1"
+      - key: IT_DUB_DENSITY
+        value: "0.55"
+      - key: IT_WATCH_OVERSAMPLE
+        value: "1"
+      - key: JUSTWATCH_IT_BOOST
+        value: "1"
+      - key: JUSTWATCH_IT_CACHE_SECONDS
+        value: "86400"
       - key: NODE_VERSION
         value: "20"
